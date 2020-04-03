@@ -5,7 +5,7 @@ import torch
 
 num_disp = 20
 def from_model_object(test,model,model_root,epoch,save=True):
-	eval_path = os.path.join(model_root,'evaluate')
+	eval_path = os.path.join(model_root,'output_images')
 	if not os.path.exists(eval_path):
 		os.makedirs(eval_path)
 
@@ -32,7 +32,7 @@ def from_model_object(test,model,model_root,epoch,save=True):
 	
 	plt.suptitle('Epoch ' + str(epoch),y=0.4)
 	if save:
-		plt.savefig(os.path.join(model_root,'evaluate/result_epoch{}.png'.format(epoch)),format='png',dpi=100)
+		plt.savefig(os.path.join(eval_path,'epoch{}.png'.format(epoch)),format='png',dpi=100)
 
 def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True):
 	eval_path = os.path.join(model_root,'evaluate')
@@ -68,3 +68,32 @@ def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True)
 		plt.suptitle('Epoch ' + str(e),y=0.4)
 		if save:
 			plt.savefig(os.path.join(model_root,'evaluate/result_epoch{}.png'.format(e)),format='png',dpi=100)
+
+def calculate_metric(loader,net,is_flip_mask=False):
+	ssim = 0
+	rmse_local = 0
+	rmse_global = 0
+
+	rmse_criterion = loss.RMSELoss()
+	size = 0
+
+	for input,mask,_ in loader:
+		m = mask
+		if is_flip_mask:
+			m = (1-mask)
+		masked = input * (1-m)
+		out = net(masked)
+
+		ssim += pytorch_ssim.ssim(input, out).item() * out.shape[0]
+		rmse_global += rmse_criterion(input,out).item() * out.shape[0]
+		rmse_local += rmse_criterion(input*m,out*m).item() * out.shape[0]
+
+		size += out.shape[0]
+
+	metric = {
+		'ssim': ssim / size,
+		'rmse_global': rmse_global / size,
+		'rmse_local': rmse_local / size
+	}
+
+	return metric
