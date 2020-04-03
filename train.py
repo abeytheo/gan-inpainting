@@ -6,9 +6,8 @@ from torchvision import datasets, transforms
 from torch import optim, nn
 import os, logging, argparse
 
-from models import networks, util
-from data import dataset, evaluate
-
+from lib.models import networks, util, evaluate
+from lib.data import dataset
 
 ### Parse arguments
 parser = argparse.ArgumentParser(description='Training configurations')

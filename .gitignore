@@ -8,6 +8,7 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+.DS_Store
 build/
 develop-eggs/
 dist/
@@ -128,3 +129,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Ignore experimentals
+*.csv
+notebook/
