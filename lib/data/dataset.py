@@ -12,7 +12,7 @@ def pil_loader(path):
         return img.convert('L')
 
 class InpaintingDataset(torch.utils.data.Dataset):
-  def __init__(self, dataframe=None, csv_file=None, transform=None):
+  def __init__(self, root, dataframe=None, csv_file=None, transform=None):
     """
       dataframe: A pandas dataframe
       csv_file: A csv file name
@@ -27,6 +27,7 @@ class InpaintingDataset(torch.utils.data.Dataset):
     else:
       raise Exception("Please supply dataframe or file path")
     self.transform = transform
+    self.root = roots
 
   def __len__(self):
     return len(self.image_df)
@@ -34,8 +35,8 @@ class InpaintingDataset(torch.utils.data.Dataset):
   def __getitem__(self, idx):
 
     rows = self.image_df.iloc[idx]
-    groundtruth = pil_loader(os.path.join(rows['groundtruth_source']))
-    mask = pil_loader(os.path.join(rows['mask_source']))
+    groundtruth = pil_loader(os.path.join(root, rows['groundtruth_source']))
+    mask = pil_loader(os.path.join(root, rows['mask_source']))
     try:
       damage_type = rows['damage_type']
     except:
