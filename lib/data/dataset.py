@@ -27,7 +27,7 @@ class InpaintingDataset(torch.utils.data.Dataset):
     else:
       raise Exception("Please supply dataframe or file path")
     self.transform = transform
-    self.root = roots
+    self.root = root
 
   def __len__(self):
     return len(self.image_df)
@@ -35,8 +35,8 @@ class InpaintingDataset(torch.utils.data.Dataset):
   def __getitem__(self, idx):
 
     rows = self.image_df.iloc[idx]
-    groundtruth = pil_loader(os.path.join(root, rows['groundtruth_source']))
-    mask = pil_loader(os.path.join(root, rows['mask_source']))
+    groundtruth = pil_loader(os.path.join(self.root, rows['groundtruth_source']))
+    mask = pil_loader(os.path.join(self.root, rows['mask_source']))
     try:
       damage_type = rows['damage_type']
     except:
