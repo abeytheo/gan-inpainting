@@ -59,7 +59,7 @@ lambda2=args.lambda2
 
 use_cuda = True
 
-logger.info(args)
+logger.info(str(args))
 
 device = torch.device("cuda:0")
 logger.info('using device',device)
@@ -69,7 +69,7 @@ dataset_path = "/home/s2125048/thesis/dataset/"
 ### construct training dataset
 train_df = pd.read_csv('train.csv')
 
-train_dataset = dataset.InpaintingDataset(dataframe=train_df,
+train_dataset = dataset.InpaintingDataset(dataset_path,dataframe=train_df,
                                   transform=transforms.Compose([
                           transforms.Resize(image_target_size,),
                           transforms.ToTensor()]))
@@ -84,7 +84,7 @@ train_loader = torch.utils.data.DataLoader(
 ### construct test dataset
 test_df = pd.read_csv('test.csv')
 
-test_dataset = dataset.InpaintingDataset(dataframe=test_df,
+test_dataset = dataset.InpaintingDataset(dataset_path,dataframe=test_df,
                                   transform=transforms.Compose([
                           transforms.Resize(image_target_size,),
                           transforms.ToTensor()]))
@@ -97,7 +97,7 @@ test_loader = torch.utils.data.DataLoader(
 
 ### construct extra dataset
 extra_df = pd.read_csv('extra.csv')
-extra_dataset = dataset.InpaintingDataset(dataframe=extra_df,
+extra_dataset = dataset.InpaintingDataset(dataset_path,dataframe=extra_df,
                                   transform=transforms.Compose([
                           transforms.Resize(image_target_size,),
                           transforms.ToTensor()]))
@@ -111,9 +111,9 @@ extra_loader = torch.utils.data.DataLoader(
 sample_test_images = next(iter(extra_loader))
 
 ### networks
-net_G = networks.get_network('generator',args.generator)
-net_D_global = networks.get_network('discriminator',args.discriminator)
-net_D_local = networks.get_network('discriminator',args.discriminator)
+net_G = networks.get_network('generator',args.generator).to(device)
+net_D_global = networks.get_network('discriminator',args.discriminator).to(device)
+net_D_local = networks.get_network('discriminator',args.discriminator).to(device)
 
 rmse_criterion = loss.RMSELoss()
 ce_criterion = nn.CrossEntropyLoss()
@@ -146,7 +146,7 @@ for epoch in range(num_epochs + 1):
     # 1: Generator maximize [ log(D(G(x))) ]
     ###
 
-    util.set_requires_grad([net_D],False)
+    util.set_requires_grad([net_D_global,net_D_local],False)
     G_optimizer.zero_grad()
 
     ## Inpaint masked images
@@ -174,7 +174,7 @@ for epoch in range(num_epochs + 1):
     # 2: Discriminator maximize [ log(D(x)) + log(1 - D(G(x))) ]
     ###
 
-    util.set_requires_grad([net_D],True)
+    util.set_requires_grad([net_D_global,net_D_local],True)
     D_optimizer.zero_grad()
 
     ## We want the discriminator to be able to identify fake and real images
