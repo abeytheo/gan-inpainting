@@ -3,8 +3,11 @@ import numpy as np
 from matplotlib import pyplot as plt
 import torch
 
+import lib.models.loss as loss
+import lib.pytorch_ssim as pytorch_ssim
+
 num_disp = 20
-def from_model_object(test,model,model_root,epoch,save=True):
+def from_model_object(test,model,model_root,epoch,save=True,is_flip_mask=False):
 	eval_path = os.path.join(model_root,'output_images')
 	if not os.path.exists(eval_path):
 		os.makedirs(eval_path)
@@ -13,6 +16,8 @@ def from_model_object(test,model,model_root,epoch,save=True):
 
 	ground = test[0]
 	mask = test[1]
+	if is_flip_mask:
+		mask = (1-mask)
 	masked = ground * (1-mask)
 	out = loaded_G(masked.cuda())
 
@@ -34,7 +39,7 @@ def from_model_object(test,model,model_root,epoch,save=True):
 	if save:
 		plt.savefig(os.path.join(eval_path,'epoch{}.png'.format(epoch)),format='png',dpi=100)
 
-def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True):
+def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True,is_flip_mask=False):
 	eval_path = os.path.join(model_root,'evaluate')
 	if not os.path.exists(eval_path):
 		os.makedirs(eval_path)
@@ -48,6 +53,8 @@ def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True)
 		
 		ground = test[0]
 		mask = test[1]
+		if is_flip_mask:
+			mask = (1-mask)
 		masked = ground * (1-mask)
 		out = loaded_G(masked.cpu())
 
@@ -76,19 +83,20 @@ def calculate_metric(loader,net,is_flip_mask=False):
 
 	rmse_criterion = loss.RMSELoss()
 	size = 0
+	with torch.no_grad():
+		for input,mask,_ in loader:
+			m = mask.cuda()
+			input = input.cuda()
+			if is_flip_mask:
+				m = (1-mask)
+			masked = input * (1-m)
+			out = net(masked)
 
-	for input,mask,_ in loader:
-		m = mask
-		if is_flip_mask:
-			m = (1-mask)
-		masked = input * (1-m)
-		out = net(masked)
+			ssim += pytorch_ssim.ssim(input, out).item() * out.shape[0]
+			rmse_global += rmse_criterion(input,out).item() * out.shape[0]
+			rmse_local += rmse_criterion(input*m,out*m).item() * out.shape[0]
 
-		ssim += pytorch_ssim.ssim(input, out).item() * out.shape[0]
-		rmse_global += rmse_criterion(input,out).item() * out.shape[0]
-		rmse_local += rmse_criterion(input*m,out*m).item() * out.shape[0]
-
-		size += out.shape[0]
+			size += out.shape[0]
 
 	metric = {
 		'ssim': ssim / size,
