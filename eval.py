@@ -41,7 +41,7 @@ def replace_path(x,ds_path):
   x['groundtruth_source'] = os.path.join(ds_path,x['groundtruth_source'])
   return x
 eval_df = eval_df.apply(lambda x: replace_path(x,args.datasetpath),1)
-eval_dataset = dataset.InpaintingDataset(dataframe=eval_df,
+eval_dataset = dataset.InpaintingDataset('',dataframe=eval_df,
                                   transform=transforms.Compose([
                           transforms.ToTensor()]))
 
@@ -78,43 +78,43 @@ for m in os.listdir(model_path):
         G_statedict = torch.load(full_path,map_location=device)
         net_G.load_state_dict(G_statedict)
         
-        batch_ssim = torch.tensor([],dtype=torch.float32)
-        batch_l2 = torch.tensor([],dtype=torch.float32)
-        batch_ssim_local = torch.tensor([],dtype=torch.float32)
-        batch_l2_local = torch.tensor([],dtype=torch.float32)
+        # batch_ssim = torch.tensor([],dtype=torch.float32)
+        # batch_l2 = torch.tensor([],dtype=torch.float32)
+        # batch_ssim_local = torch.tensor([],dtype=torch.float32)
+        # batch_l2_local = torch.tensor([],dtype=torch.float32)
 
         for gt,m,_ in eval_loader:
 
           ground = gt
           mask = m
 
-          if 'real' in args.csvfile:
+          if 'real' in args.csvfile or 'extra' in args.csvfile:
             masked = ground * mask
           else:
             masked = ground * (1-mask)
           
           out[epoch] = net_G(masked.cpu())
-          ssim = pytorch_ssim.ssim(ground, out[epoch])
-          l2 = torch.dist(ground,out[epoch])
+          # ssim = pytorch_ssim.ssim(ground, out[epoch])
+          # l2 = torch.dist(ground,out[epoch])
 
-          if 'real' in args.csvfile:
-            ssim_local = pytorch_ssim.ssim(ground * (1-mask), out[epoch]*(1-mask))
-            l2_local = torch.dist(ground * (1-mask), out[epoch]*(1-mask))
-          else:
-            ssim_local = pytorch_ssim.ssim(ground * mask, out[epoch]*mask)
-            l2_local = torch.dist(ground * mask, out[epoch]*mask)
+          # if 'real' in args.csvfile:
+          #   ssim_local = pytorch_ssim.ssim(ground * (1-mask), out[epoch]*(1-mask))
+          #   l2_local = torch.dist(ground * (1-mask), out[epoch]*(1-mask))
+          # else:
+          #   ssim_local = pytorch_ssim.ssim(ground * mask, out[epoch]*mask)
+          #   l2_local = torch.dist(ground * mask, out[epoch]*mask)
           
-          batch_ssim = torch.cat((batch_ssim,ssim))
-          batch_l2 = torch.cat((batch_l2,l2))
-          batch_ssim_local = torch.cat((batch_ssim_local,ssim_local))
-          batch_l2_local = torch.cat((batch_l2_local,l2_local))
+          # batch_ssim = torch.cat((batch_ssim,ssim))
+          # batch_l2 = torch.cat((batch_l2,l2))
+          # batch_ssim_local = torch.cat((batch_ssim_local,ssim_local))
+          # batch_l2_local = torch.cat((batch_l2_local,l2_local))
         
-        metrics[epoch] = {
-          'ssim': batch_ssim.mean().item(),
-          'l2': batch_l2.mean().item(),
-          'ssim_local': batch_ssim_local.mean().item(),
-          'l2_local': batch_l2_local.mean().item()
-        }
+        # metrics[epoch] = {
+        #   'ssim': batch_ssim.mean().item(),
+        #   'l2': batch_l2.mean().item(),
+        #   'ssim_local': batch_ssim_local.mean().item(),
+        #   'l2_local': batch_l2_local.mean().item()
+        # }
 
 with open(os.path.join(model_path,'{}_input.obj'.format(ts)),'wb') as handle:
   inp = {
@@ -127,5 +127,5 @@ with open(os.path.join(model_path,'{}_input.obj'.format(ts)),'wb') as handle:
 with open(os.path.join(model_path,'{}_output.obj'.format(ts)),'wb') as handle:
   pickle.dump(out, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-with open(os.path.join(model_path,'{}_metric.obj'.format(ts)),'wb') as handle:
-  pickle.dump(metrics, handle, protocol=pickle.HIGHEST_PROTOCOL)
+# with open(os.path.join(model_path,'{}_metric.obj'.format(ts)),'wb') as handle:
+#   pickle.dump(metrics, handle, protocol=pickle.HIGHEST_PROTOCOL)

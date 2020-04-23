@@ -18,7 +18,7 @@ def get_network(type,name):
                                  use_dropout='False')
     else:
       raise Exception("Invalid generator network name")
-  elif ntype == 'discriminator':
+  elif type == 'discriminator':
     if name =='dcgan':
       return DCGANDiscriminator()
     elif name == 'patchgan':
