@@ -78,7 +78,7 @@ def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True,
 		if save:
 			plt.savefig(os.path.join(model_root,'evaluate/result_epoch{}.png'.format(e)),format='png',dpi=100)
 
-def calculate_metric(loader,net,mode,is_flip_mask=False):
+def calculate_metric(loader,net,fid_stats,mode,is_flip_mask=False):
   ### mode = train or test
   recon_global = 0
   recon_local = 0
@@ -116,11 +116,7 @@ def calculate_metric(loader,net,mode,is_flip_mask=False):
 
   m2, s2 = fid._compute_statistics_of_path(target_dir,inception_model,50,2048,True)
 
-  fid_score = 0
-  if mode == 'train':
-    fid_score = fid.calculate_frechet_distance(train_fid_stats[0], train_fid_stats[1], m2, s2)
-  elif mode == 'test':
-    fid_score = fid.calculate_frechet_distance(test_fid_stats[0], test_fid_stats[1], m2, s2)
+  fid_score = fid.calculate_frechet_distance(fid_stats[0], fid_stats[1], m2, s2)
 
   metric = {
     'rmse_global': recon_global / size,

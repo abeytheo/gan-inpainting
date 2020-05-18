@@ -234,8 +234,8 @@ def begin(state, loaders):
     })
 
     if epoch % evaluate_every == 0 and epoch > 0:
-      train_metric = calculate_metric(train_loader,net_G,mode='train')
-      test_metric = calculate_metric(test_loader,net_G,mode='test')
+      train_metric = calculate_metric(train_loader,net_G,state['train_fid'],mode='train')
+      test_metric = calculate_metric(test_loader,net_G,state['test_fid'],mode='test')
       eval_hist.append({
         'train': train_metric,
         'test': test_metric
