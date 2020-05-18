@@ -1,21 +1,21 @@
-import torch
+import importlib, os
+import argparse
 import pandas as pd
-import time
-import pickle
-import itertools
-from torchvision import datasets, transforms
-from torch import optim, nn
-import os, logging, argparse
 
-import lib.pytorch_ssim as pytorch_ssim
-from lib.models import networks, util, loss, evaluate
+import skimage
+from skimage.color import grey2rgb
+
+import torch
+from torchvision import datasets, transforms
+
 from lib.data import dataset
 
-### Parse arguments
-parser = argparse.ArgumentParser(description='Training configurations')
+from lib.fid.inception import InceptionV3
+import lib.fid.fid_score as fid
 
-parser.add_argument('-t','--title', type=str, help='Experiment title', required=True)
-parser.add_argument('-e','--numepoch', nargs='?', type=int, default=1000, help='Number of training epoch')
+### Arguments
+parser.add_argument('-exp','--experiments',nargs='+',type=str,required=True)
+parser.add_argument('-ep','--numepoch', nargs='?', type=int, default=1500, help='Number of training epoch')
 parser.add_argument('-b','--batchsize', nargs='?', type=int, default=128, help='Batch size in one training epoch')
 parser.add_argument('-g','--generator', nargs='?', type=str, choices=['unet','vgg19'], default='unet', help='Generator network name')
 parser.add_argument('-d','--discriminator', nargs='?', type=str, choices=['patchgan','dcgan'], default='patchgan',help='Discriminator network name')
@@ -23,51 +23,25 @@ parser.add_argument('--imagedim', nargs='?', type=int, default=128,help='Image d
 parser.add_argument('--saveevery', nargs='?', type=int, default=50,help='Save network every N epoch(s)')
 parser.add_argument('--updatediscevery', nargs='?', type=int, default=3,help='Backprop discriminator every N epoch(s)')
 parser.add_argument('--evalevery', nargs='?', type=int, default=10,help='Evaluate test set every')
-parser.add_argument('--lambda1', nargs='?', type=int, default=300,help='Hyperparameter lambda 1')
-parser.add_argument('--lambda2', nargs='?', type=int, default=300,help='Hyperparameter lambda 2')
 
 args = parser.parse_args()
+state = vars(args)
 
-### Create save directory
-experiment_dir = "/home/s2125048/thesis/model/{}/".format(args.title)
+### Check experiment file
+exp_list = os.listdir('experiment_list'):  
+for ex in args.experiments:
+  if ex+'.py' not in exp_list:
+    raise Exception("Invalid experiments")
 
-if not os.path.exists(experiment_dir):
-  os.makedirs(experiment_dir)
-else:
-  raise Exception('Experiment title has been used, please supply different title')
-
-### Setup logger
-logger = logging.getLogger('inpainting')
-hdlr = logging.FileHandler('{}.log'.format(args.title))
-formatter = logging.Formatter('%(asctime)s %(message)s')
-hdlr.setFormatter(formatter)
-logger.addHandler(hdlr)
-logger.setLevel(logging.INFO)
-
-### settings
-image_target_size = (args.imagedim,args.imagedim)
-batch_size = args.batchsize
-shuffle = True 
-
-update_d_every = args.updatediscevery
-evaluate_every = args.evalevery
-num_epochs = args.numepoch
-save_every = args.saveevery
-
-lambda1=args.lambda1
-lambda2=args.lambda2
-
-use_cuda = True
-
-logger.info(str(args))
-
-device = torch.device("cuda:0")
-logger.info('using device',device)
-
+device = torch.device('cpu')
+if torch.cuda.is_available():
+  device = torch.device("cuda:0")
+  
+shuffle = True
 dataset_path = "/home/s2125048/thesis/dataset/"
 
 ### construct training dataset
-train_df = pd.read_csv('train.csv')
+train_df = pd.read_csv(os.path.join(dataset_path,'csv/train_all_masks.csv'))
 
 train_dataset = dataset.InpaintingDataset(dataset_path,dataframe=train_df,
                                   transform=transforms.Compose([
@@ -76,13 +50,13 @@ train_dataset = dataset.InpaintingDataset(dataset_path,dataframe=train_df,
 
 train_loader = torch.utils.data.DataLoader(
   train_dataset,
-  batch_size=batch_size,
+  batch_size=args.batchsize,
   num_workers=0,
   shuffle=shuffle
 )
 
 ### construct test dataset
-test_df = pd.read_csv('test.csv')
+test_df = pd.read_csv(os.path.join(dataset_path,'csv/test_all_masks.csv'))
 
 test_dataset = dataset.InpaintingDataset(dataset_path,dataframe=test_df,
                                   transform=transforms.Compose([
@@ -90,13 +64,13 @@ test_dataset = dataset.InpaintingDataset(dataset_path,dataframe=test_df,
                           transforms.ToTensor()]))
 test_loader = torch.utils.data.DataLoader(
   test_dataset,
-  batch_size=batch_size,
+  batch_size=args.batchsize,
   num_workers=0,
-  shuffle=True
+  shuffle=shuffle
 )
 
-### construct extra dataset
-extra_df = pd.read_csv('extra.csv')
+### construct controlled set
+extra_df = pd.read_csv(os.path.join(dataset_path,'csv/extra.csv'))
 extra_dataset = dataset.InpaintingDataset(dataset_path,dataframe=extra_df,
                                   transform=transforms.Compose([
                           transforms.Resize(image_target_size,),
@@ -105,145 +79,70 @@ extra_loader = torch.utils.data.DataLoader(
   extra_dataset,
   batch_size=30,
   num_workers=0,
-  shuffle=True
+  shuffle=False
 )
 
 sample_test_images = next(iter(extra_loader))
 
-### networks
-net_G = networks.get_network('generator',args.generator).to(device)
-net_D_global = networks.get_network('discriminator',args.discriminator).to(device)
-net_D_local = networks.get_network('discriminator',args.discriminator).to(device)
+### populate ground truths
+print('Populating groundtruths')
 
-rmse_criterion = loss.RMSELoss()
-mse_criterion = nn.MSELoss()
-ce_criterion = nn.CrossEntropyLoss()
+print('Train')
+save_dir = f'tmp/train_groundtruths/'
+if not os.path.exists(save_dir):
+  os.makedirs(save_dir)
 
-G_optimizer = optim.Adam(net_G.parameters(), lr=0.0002, betas=(0.5, 0.999))
-D_optimizer = optim.Adam(itertools.chain(net_D_local.parameters(), net_D_global.parameters()), lr=0.0002, betas=(0.5, 0.999))
+for index,(ground, mask,_) in enumerate(train_loader):
+  for c,g in enumerate(ground):
+    im = (g[0].numpy()*255).astype(np.uint8)
+    im = grey2rgb(im)
+    io.imsave(os.path.join(save_dir,f'batch_{index+1}_{c+1}.jpg'),im)
 
-training_epoc_hist = []
-eval_hist = []
+print('Test')
+save_dir = f'tmp/test_groundtruths/'
+if not os.path.exists(save_dir):
+  os.makedirs(save_dir)
 
-for epoch in range(num_epochs + 1):
-  start = time.time()
+for index,(ground, mask,_) in enumerate(test_loader):
+  for c,g in enumerate(ground):
+    im = (g[0].numpy()*255).astype(np.uint8)
+    im = grey2rgb(im)
+    io.imsave(os.path.join(save_dir,f'batch_{index+1}_{c+1}.jpg'),im)
 
-  epoch_g_loss = {
-    'total': 0,
-    'rmse_local': 0,
-    'rmse_global': 0,
-    'ssim': 0
-  }
-  epoch_d_loss = 0
-  
-  for i,(ground,mask,_) in enumerate(train_loader):
+print('Controlled')
+save_dir = f'tmp/extra_groundtruths/'
+if not os.path.exists(save_dir):
+  os.makedirs(save_dir)
 
-    ground = ground.to(device)
-    mask = mask.to(device)
+for index,(ground, mask,_) in enumerate(extra_loader):
+  for c,g in enumerate(ground):
+    im = (g[0].numpy()*255).astype(np.uint8)
+    im = grey2rgb(im)
+    io.imsave(os.path.join(save_dir,f'batch_{index+1}_{c+1}.jpg'),im)
 
-    masked = ground * (1-mask)
+### end populate groundtruths
 
-    ###
-    # 1: Generator maximize [ log(D(G(x))) ]
-    ###
+loaders = {
+  'train': train_loader,
+  'test': test_loader,
+  'extra': extra_loader
+}
 
-    util.set_requires_grad([net_D_global,net_D_local],False)
-    G_optimizer.zero_grad()
+### calculate fid statistics on groundtruths
+print('Calculating FID statistics')
 
-    ## Inpaint masked images
-    inpainted = net_G(masked)
+block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
+inception_model = InceptionV3([block_idx])
+inception_model = inception_model.to(device)
+train_fid_stats = fid._compute_statistics_of_path('tmp/train_groundtruths',inception_model,50,2048,True)
+test_fid_stats = fid._compute_statistics_of_path('tmp/test_groundtruths',inception_model,50,2048,True)
 
-    d_pred_fake_global = net_D_global(inpainted).view(-1)
-    d_pred_fake_local = net_D_local(mask*inpainted).view(-1)
+state['train_fid'] = train_fid_stats
+state['test_fid'] = test_fid_stats
 
-    ### we want the generator to be able to fool the discriminator, 
-    ### thus, the goal is to enable the discriminator to always predict the inpainted images as real
-    ### 1 = real, 0 = fake
-    g_adv_loss_global = mse_criterion(d_pred_fake_global, torch.ones(len(d_pred_fake_global)).to(device))
-    g_adv_loss_local = mse_criterion(d_pred_fake_local, torch.ones(len(d_pred_fake_local)).to(device))
-
-    ### the inpainted image should be close to ground truth
-    global_recon_loss = rmse_criterion(ground,inpainted)
-    local_recon_loss = rmse_criterion(mask*ground,mask*inpainted)
-
-    g_loss = g_adv_loss_global + g_adv_loss_local + lambda1 * global_recon_loss + lambda2 * local_recon_loss
-
-    g_loss.backward()
-    G_optimizer.step()
-    
-    ###
-    # 2: Discriminator maximize [ log(D(x)) + log(1 - D(G(x))) ]
-    ###
-     # Update Discriminator networks.
-    util.set_requires_grad([net_D_global,net_D_local],True)
-    D_optimizer.zero_grad()
-
-    ## We want the discriminator to be able to identify fake and real images
-    d_pred_real_global = net_D_global(ground).view(-1)
-    d_adv_loss_real_global = mse_criterion(d_pred_real_global, torch.ones(len(d_pred_real_global)).to(device) )
-    
-    d_pred_fake_global = net_D_global(inpainted.detach()).view(-1)
-    d_adv_loss_fake_global = mse_criterion(d_pred_fake_global, torch.zeros(len(d_pred_fake_global)).to(device) )    
-
-    # local
-
-    d_pred_real_local = net_D_local(ground*mask).view(-1)
-    d_adv_loss_real_local = mse_criterion(d_pred_real_local, torch.ones(len(d_pred_real_local)).to(device) )
-    
-    d_pred_fake_local = net_D_local(inpainted.detach()*mask).view(-1)
-    d_adv_loss_fake_local = mse_criterion(d_pred_fake_local, torch.zeros(len(d_pred_fake_local)).to(device) )    
-
-    d_loss = d_adv_loss_real_local + d_adv_loss_fake_local + d_adv_loss_real_global + d_adv_loss_fake_global
-
-    #if i % update_d_every == 0 and i > 0:
-    d_loss.backward()
-    D_optimizer.step()
-
-    ### later will be divided by amount of training set
-    ### in a minibatch, number of output may differ
-    epoch_g_loss['total'] += g_loss.item() * inpainted.shape[0]
-    epoch_g_loss['rmse_global'] += global_recon_loss.item() * inpainted.shape[0]
-    epoch_g_loss['rmse_local'] += local_recon_loss.item() * inpainted.shape[0]
-
-    ### calculate SSIM in training
-    epoch_g_loss['ssim'] += pytorch_ssim.ssim(ground.detach(),inpainted.detach()).item() * inpainted.shape[0]
-    epoch_d_loss += d_loss.item() * inpainted.shape[0]
-  
-  ### get epoch loss for G and D
-  epoch_g_loss['total'] = epoch_g_loss['total'] / len(train_df)
-  epoch_g_loss['rmse_global'] = epoch_g_loss['rmse_global'] / len(train_df)
-  epoch_g_loss['rmse_local'] = epoch_g_loss['rmse_local'] / len(train_df)
-  epoch_g_loss['ssim'] = epoch_g_loss['ssim'] / len(train_df)
-  epoch_d_loss = epoch_d_loss / len(train_df)
-  
-  training_epoc_hist.append({
-    "g": epoch_g_loss,
-    "d": epoch_d_loss
-  })
-
-  if epoch % evaluate_every == 0 and epoch > 0:
-    test_metric = evaluate.calculate_metric(test_loader,net_G)
-    extra_metric = evaluate.calculate_metric(extra_loader,net_G,is_flip_mask=True)
-    eval_hist.append({
-      'test': test_metric,
-      'extra': extra_metric
-    })
-  
-  if epoch % save_every == 0 and epoch > 0:
-    torch.save(net_G.state_dict(), os.path.join(experiment_dir, "epoch{}_G.pt".format(epoch)))
-    
-    ### save training history
-    with open(os.path.join(experiment_dir,'training_epoch_history.obj'),'wb') as handle:
-      pickle.dump(training_epoc_hist, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    
-    ### save evaluation history
-    with open(os.path.join(experiment_dir,'eval_history.obj'),'wb') as handle:
-      pickle.dump(eval_hist, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-    evaluate.from_model_object(sample_test_images,net_G,experiment_dir,epoch)
-    
-  elapsed = time.time() - start
-  logger.info(f'epoch: {epoch}, time: {elapsed:.3f}s, D loss: {d_loss.item():.3f}, G loss: {g_loss.item():.3f}')
-
-with open(os.path.join(experiment_dir,'training_configuration.obj'),'wb') as handle:
-      pickle.dump(args, handle, protocol=pickle.HIGHEST_PROTOCOL)
+print('Begin experiments')
+for module in exp_list:
+  print(module)
+  exp = importlib.import_module('experiment_list.{}'.format(m))
+  exp.begin(state, loaders)
+print('Finished~')

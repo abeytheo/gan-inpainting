@@ -2,9 +2,11 @@ import os
 import numpy as np
 from matplotlib import pyplot as plt
 import torch
+import glob
 
 import lib.models.loss as loss
 import lib.pytorch_ssim as pytorch_ssim
+import lib.fid.fid_score as fid
 
 num_disp = 20
 def from_model_object(test,model,model_root,epoch,save=True,is_flip_mask=False):
@@ -76,32 +78,52 @@ def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True,
 		if save:
 			plt.savefig(os.path.join(model_root,'evaluate/result_epoch{}.png'.format(e)),format='png',dpi=100)
 
-def calculate_metric(loader,net,is_flip_mask=False):
-	ssim = 0
-	rmse_local = 0
-	rmse_global = 0
+def calculate_metric(loader,net,mode,is_flip_mask=False):
+  ### mode = train or test
+  recon_global = 0
+  recon_local = 0
+  
+  rmse_criterion = RMSELoss()
+  
+  size = 0
+  target_dir = f'tmp/{mode}_m'
+  if not os.path.exists(target_dir):
+    os.makedirs(target_dir)
+  else:
+    files = glob.glob(f'{target_dir}/*')
+    for f in files:
+        os.remove(f)
 
-	rmse_criterion = loss.RMSELoss()
-	size = 0
-	with torch.no_grad():
-		for input,mask,_ in loader:
-			m = mask.cuda()
-			input = input.cuda()
-			if is_flip_mask:
-				m = (1-mask)
-			masked = input * (1-m)
-			out = net(masked)
+  with torch.no_grad():
+    for input,mask,_ in loader:
+      mask = torch.ceil(mask.to(device))
+      input = input.to(device)
+      m = mask
+      if is_flip_mask:
+        m = (1-mask)
+      masked = input * (1-m)
+      out = net(masked)
+      out = out * m + masked
+      
+      recon_global += rmse_criterion(input,out).item() * out.shape[0]
 
-			ssim += pytorch_ssim.ssim(input, out).item() * out.shape[0]
-			rmse_global += rmse_criterion(input,out).item() * out.shape[0]
-			rmse_local += rmse_criterion(input*m,out*m).item() * out.shape[0]
+      size += out.shape[0]
+      
+      for c,g in enumerate(out):
+        im = (g[0].detach().cpu().numpy()*255).astype(np.uint8)
+        im = grey2rgb(im)
+        io.imsave(os.path.join(target_dir,f'batch_{index+1}_{c+1}.jpg'),im)
 
-			size += out.shape[0]
+  m2, s2 = fid._compute_statistics_of_path(target_dir,inception_model,50,2048,True)
 
-	metric = {
-		'ssim': ssim / size,
-		'rmse_global': rmse_global / size,
-		'rmse_local': rmse_local / size
-	}
+  fid_score = 0
+  if mode == 'train':
+    fid_score = fid.calculate_frechet_distance(train_fid_stats[0], train_fid_stats[1], m2, s2)
+  elif mode == 'test':
+    fid_score = fid.calculate_frechet_distance(test_fid_stats[0], test_fid_stats[1], m2, s2)
 
-	return metric
+  metric = {
+    'rmse_global': recon_global / size,
+    'fid': fid_score
+  }
+  return metric

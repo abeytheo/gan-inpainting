@@ -38,7 +38,7 @@ else:
 
 ### Setup logger
 logger = logging.getLogger('inpainting')
-hdlr = logging.FileHandler('log/{}.log'.format(args.title))
+hdlr = logging.FileHandler('{}.log'.format(args.title))
 formatter = logging.Formatter('%(asctime)s %(message)s')
 hdlr.setFormatter(formatter)
 logger.addHandler(hdlr)
@@ -81,9 +81,6 @@ train_loader = torch.utils.data.DataLoader(
   shuffle=shuffle
 )
 
-x = evaluate.calculate_metric(test_loader,net_G)
-import sys
-sys.exit(0)
 ### construct test dataset
 test_df = pd.read_csv('test.csv')
 
@@ -116,12 +113,14 @@ sample_test_images = next(iter(extra_loader))
 ### networks
 net_G = networks.get_network('generator',args.generator).to(device)
 net_D_global = networks.get_network('discriminator',args.discriminator).to(device)
+net_D_local = networks.get_network('discriminator',args.discriminator).to(device)
 
 rmse_criterion = loss.RMSELoss()
-bce_criterion = nn.BCELoss()
+mse_criterion = nn.MSELoss()
+ce_criterion = nn.CrossEntropyLoss()
 
 G_optimizer = optim.Adam(net_G.parameters(), lr=0.0002, betas=(0.5, 0.999))
-D_optimizer = optim.Adam(net_D_global.parameters(), lr=0.0002, betas=(0.5, 0.999))
+D_optimizer = optim.Adam(itertools.chain(net_D_local.parameters(), net_D_global.parameters()), lr=0.0002, betas=(0.5, 0.999))
 
 training_epoc_hist = []
 eval_hist = []
@@ -131,16 +130,11 @@ for epoch in range(num_epochs + 1):
 
   epoch_g_loss = {
     'total': 0,
-    'adv': 0,
-    'rmse': 0,
+    'rmse_local': 0,
+    'rmse_global': 0,
     'ssim': 0
   }
-
-  epoch_d_loss = {
-    'total': 0,
-    'adv_real': 0,
-    'adv_fake': 0
-  }
+  epoch_d_loss = 0
   
   for i,(ground,mask,_) in enumerate(train_loader):
 
@@ -153,23 +147,26 @@ for epoch in range(num_epochs + 1):
     # 1: Generator maximize [ log(D(G(x))) ]
     ###
 
-    util.set_requires_grad([net_D_global],False)
+    util.set_requires_grad([net_D_global,net_D_local],False)
     G_optimizer.zero_grad()
 
     ## Inpaint masked images
     inpainted = net_G(masked)
 
     d_pred_fake_global = net_D_global(inpainted).view(-1)
+    d_pred_fake_local = net_D_local(mask*inpainted).view(-1)
 
     ### we want the generator to be able to fool the discriminator, 
     ### thus, the goal is to enable the discriminator to always predict the inpainted images as real
     ### 1 = real, 0 = fake
-    g_adv_loss_global = bce_criterion(d_pred_fake_global, torch.ones(len(d_pred_fake_global)).to(device))
-    
+    g_adv_loss_global = mse_criterion(d_pred_fake_global, torch.ones(len(d_pred_fake_global)).to(device))
+    g_adv_loss_local = mse_criterion(d_pred_fake_local, torch.ones(len(d_pred_fake_local)).to(device))
+
     ### the inpainted image should be close to ground truth
     global_recon_loss = rmse_criterion(ground,inpainted)
+    local_recon_loss = rmse_criterion(mask*ground,mask*inpainted)
 
-    g_loss = g_adv_loss_global + lambda1 * global_recon_loss
+    g_loss = g_adv_loss_global + g_adv_loss_local + lambda1 * global_recon_loss + lambda2 * local_recon_loss
 
     g_loss.backward()
     G_optimizer.step()
@@ -178,17 +175,25 @@ for epoch in range(num_epochs + 1):
     # 2: Discriminator maximize [ log(D(x)) + log(1 - D(G(x))) ]
     ###
      # Update Discriminator networks.
-    util.set_requires_grad([net_D_global],True)
+    util.set_requires_grad([net_D_global,net_D_local],True)
     D_optimizer.zero_grad()
 
     ## We want the discriminator to be able to identify fake and real images
     d_pred_real_global = net_D_global(ground).view(-1)
-    d_adv_loss_real_global = bce_criterion(d_pred_real_global, torch.ones(len(d_pred_real_global)).to(device) )
+    d_adv_loss_real_global = mse_criterion(d_pred_real_global, torch.ones(len(d_pred_real_global)).to(device) )
     
     d_pred_fake_global = net_D_global(inpainted.detach()).view(-1)
-    d_adv_loss_fake_global = bce_criterion(d_pred_fake_global, torch.zeros(len(d_pred_fake_global)).to(device) )    
+    d_adv_loss_fake_global = mse_criterion(d_pred_fake_global, torch.zeros(len(d_pred_fake_global)).to(device) )    
 
-    d_loss = d_adv_loss_real_global + d_adv_loss_fake_global
+    # local
+
+    d_pred_real_local = net_D_local(ground*mask).view(-1)
+    d_adv_loss_real_local = mse_criterion(d_pred_real_local, torch.ones(len(d_pred_real_local)).to(device) )
+    
+    d_pred_fake_local = net_D_local(inpainted.detach()*mask).view(-1)
+    d_adv_loss_fake_local = mse_criterion(d_pred_fake_local, torch.zeros(len(d_pred_fake_local)).to(device) )    
+
+    d_loss = d_adv_loss_real_local + d_adv_loss_fake_local + d_adv_loss_real_global + d_adv_loss_fake_global
 
     #if i % update_d_every == 0 and i > 0:
     d_loss.backward()
@@ -196,26 +201,20 @@ for epoch in range(num_epochs + 1):
 
     ### later will be divided by amount of training set
     ### in a minibatch, number of output may differ
-    epoch_g_loss['total'] += g_loss.item()
-    epoch_g_loss['rmse'] += global_recon_loss.item()
-    epoch_g_loss['adv'] += g_adv_loss_global.item()
-   
+    epoch_g_loss['total'] += g_loss.item() * inpainted.shape[0]
+    epoch_g_loss['rmse_global'] += global_recon_loss.item() * inpainted.shape[0]
+    epoch_g_loss['rmse_local'] += local_recon_loss.item() * inpainted.shape[0]
+
     ### calculate SSIM in training
-    epoch_g_loss['ssim'] += pytorch_ssim.ssim(ground.detach(),inpainted.detach()).item()
-    
-    epoch_d_loss['total'] += d_loss.item()
-    epoch_d_loss['adv_real'] += d_adv_loss_real_global.item()
-    epoch_d_loss['adv_fake'] += d_adv_loss_fake_global.item()
+    epoch_g_loss['ssim'] += pytorch_ssim.ssim(ground.detach(),inpainted.detach()).item() * inpainted.shape[0]
+    epoch_d_loss += d_loss.item() * inpainted.shape[0]
   
   ### get epoch loss for G and D
-  epoch_g_loss['total'] = epoch_g_loss['total'] / (i+1)
-  epoch_g_loss['adv'] = epoch_g_loss['adv'] / (i+1)
-  epoch_g_loss['rmse'] = epoch_g_loss['rmse'] / (i+1)
-  epoch_g_loss['ssim'] = epoch_g_loss['ssim'] / (i+1)
-
-  epoch_d_loss['adv_real'] = epoch_d_loss['adv_real'] / (i+1)
-  epoch_d_loss['adv_fake'] = epoch_d_loss['adv_fake'] / (i+1)
-  epoch_d_loss['total'] = epoch_d_loss / (i+1)
+  epoch_g_loss['total'] = epoch_g_loss['total'] / len(train_df)
+  epoch_g_loss['rmse_global'] = epoch_g_loss['rmse_global'] / len(train_df)
+  epoch_g_loss['rmse_local'] = epoch_g_loss['rmse_local'] / len(train_df)
+  epoch_g_loss['ssim'] = epoch_g_loss['ssim'] / len(train_df)
+  epoch_d_loss = epoch_d_loss / len(train_df)
   
   training_epoc_hist.append({
     "g": epoch_g_loss,
