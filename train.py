@@ -13,7 +13,10 @@ from lib.data import dataset
 from lib.fid.inception import InceptionV3
 import lib.fid.fid_score as fid
 
-### Arguments
+### Training arguments
+
+parser = argparse.ArgumentParser(description='Training configurations')
+
 parser.add_argument('-exp','--experiments',nargs='+',type=str,required=True)
 parser.add_argument('-ep','--numepoch', nargs='?', type=int, default=1500, help='Number of training epoch')
 parser.add_argument('-b','--batchsize', nargs='?', type=int, default=128, help='Batch size in one training epoch')
@@ -28,7 +31,7 @@ args = parser.parse_args()
 state = vars(args)
 
 ### Check experiment file
-exp_list = os.listdir('experiment_list'):  
+exp_list = os.listdir('experiment_list')
 for ex in args.experiments:
   if ex+'.py' not in exp_list:
     raise Exception("Invalid experiments")
