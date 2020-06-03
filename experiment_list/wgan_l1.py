@@ -101,7 +101,7 @@ def begin(state, loaders):
     }
 
     for n, p in net_G.named_parameters():
-      if(("bias" not in n):
+      if("bias" not in n):
           gradient_hist['avg_g'][n] = 0
     for n, p in net_D_global.named_parameters():
       if("bias" not in n):
@@ -177,7 +177,7 @@ def begin(state, loaders):
         g_adv_loss = torch.mean(d_pred_fake).view(1)
 
         ### the inpainted image should be close to ground truth
-        recon_loss = rmse_criterion(ground,inpainted)
+        recon_loss = l1_criterion(ground,inpainted)
 
         g_loss = g_adv_loss + recon_loss
         g_loss.backward()
@@ -193,7 +193,7 @@ def begin(state, loaders):
         epoch_g_loss['update_count'] += 1
 
         for n, p in net_G.named_parameters():
-          if("bias" not in n):
+          if(p.requires_grad) and ("bias" not in n):
             gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
 
         logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
@@ -208,7 +208,7 @@ def begin(state, loaders):
       epoch_d_loss['update_count'] += 1
 
       for n, p in net_D_global.named_parameters():
-        if("bias" not in n):
+        if(p.requires_grad) and ("bias" not in n):
           gradient_hist['avg_d'][n] += p.grad.abs().mean().item()
     
     ### get gradient and epoch loss for generator
@@ -218,7 +218,7 @@ def begin(state, loaders):
       epoch_g_loss['adv'] = epoch_g_loss['adv'] / epoch_g_loss['update_count']
 
       for n, p in net_G.named_parameters():
-        if("bias" not in n):
+        if(p.requires_grad) and ("bias" not in n):
           gradient_hist['avg_g'][n] = gradient_hist['avg_g'][n] / epoch_g_loss['update_count']
 
     except:
@@ -229,7 +229,7 @@ def begin(state, loaders):
       epoch_g_loss['adv'] = -7777
 
       for n, p in net_G.named_parameters():
-        if("bias" not in n):
+        if(p.requires_grad) and ("bias" not in n):
           gradient_hist['avg_g'][n] = -7777
 
     
@@ -239,7 +239,7 @@ def begin(state, loaders):
     epoch_d_loss['adv_fake'] = epoch_d_loss['adv_fake'] / epoch_d_loss['update_count']
     
     for n, p in net_D_global.named_parameters():
-      if("bias" not in n):
+      if(p.requires_grad) and ("bias" not in n):
         gradient_hist['avg_d'][n] = gradient_hist['avg_d'][n] / epoch_d_loss['update_count']
     
     training_epoc_hist.append({

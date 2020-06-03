@@ -1,8 +1,9 @@
 import importlib, os
 import argparse
 import pandas as pd
-
+import numpy as np
 import skimage
+import skimage.io as io
 from skimage.color import grey2rgb
 
 import torch
@@ -41,6 +42,7 @@ if torch.cuda.is_available():
   device = torch.device("cuda:0")
   
 shuffle = True
+image_target_size = args.imagedim
 dataset_path = "/home/s2125048/thesis/dataset/"
 
 ### construct training dataset
@@ -142,10 +144,11 @@ test_fid_stats = fid._compute_statistics_of_path('tmp/test_groundtruths',incepti
 
 state['train_fid'] = train_fid_stats
 state['test_fid'] = test_fid_stats
+state['inception_model'] = inception_model
 
 print('Begin experiments')
 for module in exp_list:
   print(module)
-  exp = importlib.import_module('experiment_list.{}'.format(m))
+  exp = importlib.import_module('experiment_list.{}'.format(module))
   exp.begin(state, loaders)
 print('Finished~')

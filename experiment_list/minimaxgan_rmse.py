@@ -55,7 +55,7 @@ def begin(state, loaders):
 
   ### networks
   net_G = networks.get_network('generator',state['generator']).to(device)
-  net_D_global = get_network('discriminator',state['discriminator']).to(device)
+  net_D_global = networks.get_network('discriminator',state['discriminator']).to(device)
 
   rmse_criterion = loss.RMSELoss()
   bce_criterion = nn.BCELoss()
@@ -101,10 +101,10 @@ def begin(state, loaders):
     }
 
     for n, p in net_G.named_parameters():
-      if(p.requires_grad) and ("bias" not in n):
+      if("bias" not in n):
           gradient_hist['avg_g'][n] = 0
     for n, p in net_D_global.named_parameters():
-      if(p.requires_grad) and ("bias" not in n):
+      if("bias" not in n):
           gradient_hist['avg_d'][n] = 0
     
     for current_batch_index,(ground,mask,_) in enumerate(train_loader):
@@ -126,7 +126,7 @@ def begin(state, loaders):
       ###
       # Update Discriminator networks.
 
-      set_requires_grad([net_D_global],True)
+      util.set_requires_grad([net_D_global],True)
       D_optimizer.zero_grad()
 
       ## We want the discriminator to be able to identify fake and real images+ add_label_noise(noise_std,curr_batch_size)
@@ -135,7 +135,7 @@ def begin(state, loaders):
       d_loss_real = bce_criterion(d_pred_real, torch.ones(len(d_pred_real)).to(device) )
       d_loss_real.backward()
 
-      D_x = d_adv_loss_real.mean().item()
+      D_x = d_loss_real.mean().item()
 
       d_pred_fake = net_D_global(inpainted.detach()).view(-1)
       d_loss_fake = bce_criterion(d_pred_fake, torch.zeros(len(d_pred_fake)).to(device) )    
@@ -151,7 +151,7 @@ def begin(state, loaders):
       # 2: Generator maximize [ log(D(G(x))) ]
       ###
 
-      set_requires_grad([net_D_global],False)
+      util.set_requires_grad([net_D_global],False)
       G_optimizer.zero_grad()
 
       d_pred_fake = net_D_global(inpainted).view(-1)
@@ -178,7 +178,7 @@ def begin(state, loaders):
       epoch_g_loss['update_count'] += 1
 
       for n, p in net_G.named_parameters():
-        if(p.requires_grad) and ("bias" not in n):
+        if("bias" not in n):
           gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
 
       logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
@@ -193,7 +193,7 @@ def begin(state, loaders):
       epoch_d_loss['update_count'] += 1
 
       for n, p in net_D_global.named_parameters():
-        if(p.requires_grad) and ("bias" not in n):
+        if("bias" not in n):
           gradient_hist['avg_d'][n] += p.grad.abs().mean().item()
     
     ### get gradient and epoch loss for generator
@@ -203,7 +203,7 @@ def begin(state, loaders):
       epoch_g_loss['adv'] = epoch_g_loss['adv'] / epoch_g_loss['update_count']
 
       for n, p in net_G.named_parameters():
-        if(p.requires_grad) and ("bias" not in n):
+        if("bias" not in n):
           gradient_hist['avg_g'][n] = gradient_hist['avg_g'][n] / epoch_g_loss['update_count']
 
     except:
@@ -214,17 +214,16 @@ def begin(state, loaders):
       epoch_g_loss['adv'] = -7777
 
       for n, p in net_G.named_parameters():
-        if(p.requires_grad) and ("bias" not in n):
+        if("bias" not in n):
           gradient_hist['avg_g'][n] = -7777
 
-    
     ### get gradient and epoch loss for discriminator
     epoch_d_loss['total'] = epoch_d_loss['total'] / epoch_d_loss['update_count']
     epoch_d_loss['adv_real'] = epoch_d_loss['adv_real'] / epoch_d_loss['update_count']
     epoch_d_loss['adv_fake'] = epoch_d_loss['adv_fake'] / epoch_d_loss['update_count']
     
     for n, p in net_D_global.named_parameters():
-      if(p.requires_grad) and ("bias" not in n):
+      if("bias" not in n):
         gradient_hist['avg_d'][n] = gradient_hist['avg_d'][n] / epoch_d_loss['update_count']
     
     training_epoc_hist.append({
@@ -234,8 +233,8 @@ def begin(state, loaders):
     })
 
     if epoch % evaluate_every == 0 and epoch > 0:
-      train_metric = calculate_metric(train_loader,net_G,state['train_fid'],mode='train')
-      test_metric = calculate_metric(test_loader,net_G,state['test_fid'],mode='test')
+      train_metric = evaluate.calculate_metric(device,train_loader,net_G,state['train_fid'],mode='train',inception_model=state['inception_model'])
+      test_metric = evaluate.calculate_metric(device,test_loader,net_G,state['test_fid'],mode='test',inception_model=state['inception_model'])
       eval_hist.append({
         'train': train_metric,
         'test': test_metric
@@ -259,4 +258,4 @@ def begin(state, loaders):
         pass
         
     elapsed = time.time() - start
-    logger.info(f'epoch: {epoch}, time: {elapsed:.3f}s, D total: {epoch_d_loss["total"]:.10f}, D real: {epoch_d_loss["adv_real"]:.10f}, D fake: {epoch_d_loss["adv_fake"]:.10f}, G total: {epoch_g_loss["total"]:.3f}, G adv: {epoch_g_loss["adv"]:.10f}, G recon: {epoch_g_loss["rmse"]:.3f}')
+    logger.info(f'epoch: {epoch}, time: {elapsed:.3f}s, D total: {epoch_d_loss["total"]:.10f}, D real: {epoch_d_loss["adv_real"]:.10f}, D fake: {epoch_d_loss["adv_fake"]:.10f}, G total: {epoch_g_loss["total"]:.3f}, G adv: {epoch_g_loss["adv"]:.10f}, G recon: {epoch_g_loss["recon"]:.3f}')

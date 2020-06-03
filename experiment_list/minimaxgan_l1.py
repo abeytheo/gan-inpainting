@@ -17,7 +17,7 @@ def begin(state, loaders):
   state = state.copy()
   state.update(
     {
-      'title': 'wgan_rmse'
+      'title': 'minimaxgan_rmse'
     }
   }
 
@@ -55,14 +55,14 @@ def begin(state, loaders):
 
   ### networks
   net_G = networks.get_network('generator',state['generator']).to(device)
-  net_D_global = networks.PatchGANDiscriminator(sigmoid=False).to(device)
+  net_D_global = networks.get_network('discriminator',state['discriminator']).to(device)
 
   rmse_criterion = loss.RMSELoss()
   bce_criterion = nn.BCELoss()
   l1_criterion = nn.L1Loss()
 
-  G_optimizer = optim.RMSprop(net_G.parameters(),lr=0.00005)
-  D_optimizer = optim.RMSprop(net_D_global.parameters(),lr=0.00005)
+  G_optimizer = optim.Adam(net_G.parameters(), lr=0.0002, betas=(0.5, 0.999))
+  D_optimizer = optim.Adam(net_D_global.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
   update_g_every = 5
 
@@ -101,7 +101,7 @@ def begin(state, loaders):
     }
 
     for n, p in net_G.named_parameters():
-      if(("bias" not in n):
+      if("bias" not in n):
           gradient_hist['avg_g'][n] = 0
     for n, p in net_D_global.named_parameters():
       if("bias" not in n):
@@ -125,80 +125,65 @@ def begin(state, loaders):
       # 1: Discriminator maximize [ log(D(x)) + log(1 - D(G(x))) ]
       ###
       # Update Discriminator networks.
-      util.set_requires_grad([net_D_global],True)
 
+      util.set_requires_grad([net_D_global],True)
       D_optimizer.zero_grad()
 
       ## We want the discriminator to be able to identify fake and real images+ add_label_noise(noise_std,curr_batch_size)
 
-      d_pred_real = net_D_global(ground)
-      d_pred_fake = net_D_global(inpainted.detach())
+      d_pred_real = net_D_global(ground).view(-1)
+      d_loss_real = bce_criterion(d_pred_real, torch.ones(len(d_pred_real)).to(device) )
+      d_loss_real.backward()
 
-      d_loss_real = torch.mean(d_pred_real).view(1)
-      d_loss_real.backward(one)
+      D_x = d_loss_real.mean().item()
 
-      d_loss_fake = torch.mean(d_pred_fake).view(1)
-      d_loss_fake.backward(mone)
-
-      d_loss =  d_loss_real - d_loss_fake
+      d_pred_fake = net_D_global(inpainted.detach()).view(-1)
+      d_loss_fake = bce_criterion(d_pred_fake, torch.zeros(len(d_pred_fake)).to(device) )    
+      d_loss_fake.backward()
 
       D_G_z1 = d_pred_fake.mean().item()
-      D_x = d_pred_real.mean().item()
+
+      d_loss = d_loss_real + d_loss_fake
+
       D_optimizer.step()
 
-      D_iter_count +=1
+      ###
+      # 2: Generator maximize [ log(D(G(x))) ]
+      ###
 
-      # Clip weights of discriminator
-      for p in net_D_global.parameters():
-          p.data.clamp_(-0.01, 0.01)
+      util.set_requires_grad([net_D_global],False)
+      G_optimizer.zero_grad()
+
+      d_pred_fake = net_D_global(inpainted).view(-1)
+
+      ### we want the generator to be able to fool the discriminator, 
+      ### thus, the goal is to enable the discriminator to always predict the inpainted images as real
+      ### 1 = real, 0 = fake
+      g_adv_loss = bce_criterion(d_pred_fake, torch.ones(len(d_pred_fake)).to(device))
+
+      ### the inpainted image should be close to ground truth
       
-      ### On initial training epoch, we want D to converge as fast as possible before updating the generator
-      ### that's why, G is updated every 100 D iterations
-      if G_iter_count < 25 or G_iter_count % 500 == 0:
-        update_G_every_batch = 140
-      else:
-        update_G_every_batch = update_g_every
+      recon_loss = l1_criterion(ground,inpainted)
 
-      ### Update generator every `D_iter`
-      if current_batch_index % update_G_every_batch == 0 and current_batch_index > 0:
+      g_loss = g_adv_loss + recon_loss
 
-        ###
-        # 2: Generator maximize [ log(D(G(x))) ]
-        ###
+      g_loss.backward()
 
-        util.set_requires_grad([net_D_global],False)
-        G_optimizer.zero_grad()
+      D_G_z2 = d_pred_fake.mean().item()
+      G_optimizer.step()
 
-        d_pred_fake = net_D_global(inpainted).view(-1)
+      epoch_g_loss['total'] += g_loss.item()
+      epoch_g_loss['recon'] += recon_loss.item()
+      epoch_g_loss['adv'] += g_adv_loss.item()
+      epoch_g_loss['update_count'] += 1
 
-        ### we want the generator to be able to fool the discriminator, 
-        ### thus, the goal is to enable the discriminator to always predict the inpainted images as real
-        ### 1 = real, 0 = fake
-        g_adv_loss = torch.mean(d_pred_fake).view(1)
+      for n, p in net_G.named_parameters():
+        if("bias" not in n):
+          gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
 
-        ### the inpainted image should be close to ground truth
-        recon_loss = rmse_criterion(ground,inpainted)
-
-        g_loss = g_adv_loss + recon_loss
-        g_loss.backward()
-
-        D_G_z2 = d_pred_fake.mean().item()
-        G_optimizer.step()
-
-        G_iter_count +=1 
-
-        epoch_g_loss['total'] += g_loss.item()
-        epoch_g_loss['recon'] += recon_loss.item()
-        epoch_g_loss['adv'] += g_adv_loss.item()
-        epoch_g_loss['update_count'] += 1
-
-        for n, p in net_G.named_parameters():
-          if("bias" not in n):
-            gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
-
-        logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
-                % (epoch, num_epochs, current_batch_index, len(train_loader),
-                    d_loss.item(), g_adv_loss.item()))
+      logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
+              % (epoch, num_epochs, current_batch_index, len(train_loader),
+                  d_loss.item(), g_adv_loss.item()))
         
       ### later will be divided by amount of training set
       ### in a minibatch, number of output may differ
@@ -232,7 +217,6 @@ def begin(state, loaders):
         if("bias" not in n):
           gradient_hist['avg_g'][n] = -7777
 
-    
     ### get gradient and epoch loss for discriminator
     epoch_d_loss['total'] = epoch_d_loss['total'] / epoch_d_loss['update_count']
     epoch_d_loss['adv_real'] = epoch_d_loss['adv_real'] / epoch_d_loss['update_count']
