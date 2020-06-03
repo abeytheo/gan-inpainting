@@ -317,12 +317,16 @@ class UnetSkipConnectionBlock(nn.Module):
         else:   # add skip connections
             return torch.cat([x, self.model(x)], 1)
 
+class Flatten(nn.Module):
+    def forward(self, input):
+        return input.view(input.size(0), -1)
+
 ### PatchGAN Discriminator
 class PatchGANDiscriminator(nn.Module):
-    def __init__(self, c=1, n_d_channel=64):
+    def __init__(self, c=1, n_d_channel=64, sigmoid=True):
         super(PatchGANDiscriminator, self).__init__()
         n_d_channels = 64
-        self.model = nn.Sequential(
+        modules = [
             # input is c x 64 x 64
             nn.Conv2d(c, n_d_channels, kernel_size=(4, 4), stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.2),
@@ -340,11 +344,13 @@ class PatchGANDiscriminator(nn.Module):
             nn.LeakyReLU(0.2),
             # state size. (n_d_channels*8) x 4 x 4
             nn.Conv2d(n_d_channels * 8, 1, kernel_size=(4, 4), stride=1, padding=0, bias=False),
-            
-            # This is not used in the networks.NLayerDiscriminator (original paper). However, for now we will need to enable it 
-            # as we are using BCELoss. This requires values: 0 < x < 1
-            nn.Sigmoid()
-        )
+            Flatten(),
+            nn.Linear(25,1)
+        ]
+        if sigmoid:
+          modules.append(nn.Sigmoid())
+
+        self.model = nn.Sequential(*modules)
 
     def forward(self, x):
         output = self.model(x)

@@ -2,9 +2,16 @@ import os
 import numpy as np
 from matplotlib import pyplot as plt
 import torch
+from torch import nn
+import glob
+
+from skimage.color import grey2rgb
+import skimage.io as io
+import skimage
 
 import lib.models.loss as loss
 import lib.pytorch_ssim as pytorch_ssim
+import lib.fid.fid_score as fid
 
 num_disp = 20
 def from_model_object(test,model,model_root,epoch,save=True,is_flip_mask=False):
@@ -76,32 +83,50 @@ def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True,
 		if save:
 			plt.savefig(os.path.join(model_root,'evaluate/result_epoch{}.png'.format(e)),format='png',dpi=100)
 
-def calculate_metric(loader,net,is_flip_mask=False):
-	ssim = 0
-	rmse_local = 0
-	rmse_global = 0
+def calculate_metric(device,loader,net,fid_stats,mode,inception_model,is_flip_mask=False):
+  ### mode = train or test
+  recon_rmse_global = 0
+  recon_l1_global = 0
+  
+	l1_criterion - nn.L1Loss()
+  rmse_criterion = loss.RMSELoss()
+  
+  size = 0
+  target_dir = f'tmp/{mode}_m'
+  if not os.path.exists(target_dir):
+    os.makedirs(target_dir)
+  else:
+    files = glob.glob(f'{target_dir}/*')
+    for f in files:
+        os.remove(f)
 
-	rmse_criterion = loss.RMSELoss()
-	size = 0
-	with torch.no_grad():
-		for input,mask,_ in loader:
-			m = mask.cuda()
-			input = input.cuda()
-			if is_flip_mask:
-				m = (1-mask)
-			masked = input * (1-m)
-			out = net(masked)
+  with torch.no_grad():
+    for index,(input,mask,_) in enumerate(loader):
+      mask = torch.ceil(mask.to(device))
+      input = input.to(device)
+      m = mask
+      if is_flip_mask:
+        m = (1-mask)
+      masked = input * (1-m)
+      out = net(masked)
+      out = out * m + masked
+      
+      recon_rmse_global += rmse_criterion(input,out).item()
+			recon_l1_global +=  l1_criterion(input,out).item()
+      size += out.shape[0]
+      
+      for c,g in enumerate(out):
+        im = (g[0].detach().cpu().numpy()*255).astype(np.uint8)
+        im = grey2rgb(im)
+        io.imsave(os.path.join(target_dir,f'batch_{index+1}_{c+1}.jpg'),im)
 
-			ssim += pytorch_ssim.ssim(input, out).item() * out.shape[0]
-			rmse_global += rmse_criterion(input,out).item() * out.shape[0]
-			rmse_local += rmse_criterion(input*m,out*m).item() * out.shape[0]
+  m2, s2 = fid._compute_statistics_of_path(target_dir,inception_model,50,2048,True)
 
-			size += out.shape[0]
+  fid_score = fid.calculate_frechet_distance(fid_stats[0], fid_stats[1], m2, s2)
 
-	metric = {
-		'ssim': ssim / size,
-		'rmse_global': rmse_global / size,
-		'rmse_local': rmse_local / size
-	}
-
-	return metric
+  metric = {
+    'recon_rmse_global': recon_rmse_global / (index+1),
+    'recon_l1_global': recon_l1_global / (index+1),
+    'fid': fid_score
+  }
+  return metric

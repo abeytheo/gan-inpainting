@@ -9,4 +9,4 @@
 #SBATCH -N1
 
 source activate py3
-srun python -u train.py -t experiment1
+srun python -u train.py --experiments minimaxgan_rmse wgan_rmse -ep 400 -b 64 --saveevery 20 --evalevery 10
