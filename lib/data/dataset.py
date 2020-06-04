@@ -37,6 +37,8 @@ class InpaintingDataset(torch.utils.data.Dataset):
     rows = self.image_df.iloc[idx]
     groundtruth = pil_loader(os.path.join(self.root, rows['groundtruth_source']))
     mask = pil_loader(os.path.join(self.root, rows['mask_source']))
+    segment = np.load(os.path.join(self.root, rows['segment']))
+    segment = torch.from_numpy(segment)
     try:
       damage_type = rows['damage_type']
     except:
@@ -44,5 +46,6 @@ class InpaintingDataset(torch.utils.data.Dataset):
     if self.transform:
       groundtruth = self.transform(groundtruth)
       mask = self.transform(mask)
+      prefilled = self.transform(prefilled)
 
-    return groundtruth,mask,damage_type
+    return groundtruth,mask,segment
