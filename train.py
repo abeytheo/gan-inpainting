@@ -5,11 +5,14 @@ import numpy as np
 import skimage
 import skimage.io as io
 from skimage.color import grey2rgb
+import functools
 
 import torch
+from torch import nn
 from torchvision import datasets, transforms
 
 from lib.data import dataset
+from lib.models import networks
 
 from lib.fid.inception import InceptionV3
 import lib.fid.fid_score as fid
@@ -27,6 +30,7 @@ parser.add_argument('--imagedim', nargs='?', type=int, default=128,help='Image d
 parser.add_argument('--saveevery', nargs='?', type=int, default=50,help='Save network every N epoch(s)')
 parser.add_argument('--updatediscevery', nargs='?', type=int, default=3,help='Backprop discriminator every N epoch(s)')
 parser.add_argument('--evalevery', nargs='?', type=int, default=10,help='Evaluate test set every')
+parser.add_argument('--debug', nargs='?', type=str, default="false",help='Evaluate test set every')
 
 args = parser.parse_args()
 state = vars(args)
@@ -40,7 +44,21 @@ for ex in args.experiments:
 device = torch.device('cpu')
 if torch.cuda.is_available():
   device = torch.device("cuda:0")
-  
+
+"""
+  Convert string argument to boolean
+"""
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+debug = str2bool(args.debug)
 shuffle = True
 image_target_size = args.imagedim
 dataset_path = "/home/s2125048/thesis/dataset/"
@@ -139,12 +157,27 @@ print('Calculating FID statistics')
 block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
 inception_model = InceptionV3([block_idx])
 inception_model = inception_model.to(device)
-train_fid_stats = fid._compute_statistics_of_path('tmp/train_groundtruths',inception_model,50,2048,True)
-test_fid_stats = fid._compute_statistics_of_path('tmp/test_groundtruths',inception_model,50,2048,True)
+inception_model.eval()
+
+train_fid_stats = -1
+test_fid_stats = -1
+if not debug:
+  train_fid_stats = fid._compute_statistics_of_path('tmp/train_groundtruths',inception_model,50,2048,True)
+  test_fid_stats = fid._compute_statistics_of_path('tmp/test_groundtruths',inception_model,50,2048,True)
+
+### segmentation model
+segment_model_state = torch.load(os.path.join('_states/face_segmentation/face_segment_model_ep200.pt'),map_location='cuda:0' if torch.cuda.is_available() else 'cpu')
+n_classes = 4
+segment_model = networks.UnetGenerator(1, n_classes, 7, ngf=32, norm_layer=functools.partial(nn.BatchNorm2d, affine=True, track_running_stats=True), 
+                                use_dropout='False')
+segment_model.load_state_dict(state)
+segment_model = segment_model.to(device)
+segment_model.eval()
 
 state['train_fid'] = train_fid_stats
 state['test_fid'] = test_fid_stats
 state['inception_model'] = inception_model
+state['segmentation_model'] = segmentation_model
 
 print('Begin experiments')
 for module in exp_list:

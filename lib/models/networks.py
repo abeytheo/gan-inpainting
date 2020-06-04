@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from torchvision import models
 
 import functools
 
@@ -218,7 +219,7 @@ class UnetGenerator(nn.Module):
       Create a Unet-based generator
     """
 
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False):
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, use_sigmoid_output=False):
         """Construct a Unet generator
         Parameters:
             input_nc (int)  -- the number of channels in input images
@@ -240,11 +241,16 @@ class UnetGenerator(nn.Module):
         unet_block = UnetSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
         unet_block = UnetSkipConnectionBlock(ngf, ngf * 2, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
         self.model = UnetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, submodule=unet_block, outermost=True, norm_layer=norm_layer)  # add the outermost layer
+        self.use_sigmoid_output = use_sigmoid_output
 
     def forward(self, input):
         """Standard forward"""
-        return self.model(input)
+        out = self.model(input)
 
+        if self.use_sigmoid_output:
+          out = torch.sigmoid(out)
+
+        return out
 
 class UnetSkipConnectionBlock(nn.Module):
     """
@@ -355,3 +361,29 @@ class PatchGANDiscriminator(nn.Module):
     def forward(self, x):
         output = self.model(x)
         return output.view(-1, 1)
+
+
+
+class VGG19Wrapper(nn.Module):
+    def __init__(self):
+        super(VGG19Wrapper, self).__init__()
+        self.feature_maps = {}
+        vgg19 = models.vgg19(pretrained=True)
+        vgg19.features[1].register_forward_hook(self.get_activation('relu1_1'))
+        vgg19.features[6].register_forward_hook(self.get_activation('relu2_1'))
+        vgg19.features[11].register_forward_hook(self.get_activation('relu3_1'))
+        vgg19.features[20].register_forward_hook(self.get_activation('relu4_1'))
+        vgg19.features[29].register_forward_hook(self.get_activation('relu5_1'))
+
+        # vgg19.features[4].register_forward_hook(self.get_activation('pool1'))
+        # vgg19.features[9].register_forward_hook(self.get_activation('pool2'))
+        # vgg19.features[18].register_forward_hook(self.get_activation('pool3'))
+        self.vgg19 = vgg19
+
+    def get_activation(self,name):
+          def hook(model, input, output):
+              self.feature_maps[name] = output.detach()
+          return hook
+
+    def forward(self, x):
+        return self.vgg19(x)

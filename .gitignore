@@ -132,3 +132,4 @@ dmypy.json
 # Ignore experimentals
 *.csv
 notebook/
+_states/

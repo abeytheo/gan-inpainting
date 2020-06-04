@@ -9,6 +9,7 @@ from skimage.color import grey2rgb
 import skimage.io as io
 import skimage
 
+import lib.models.util as util
 import lib.models.loss as loss
 import lib.pytorch_ssim as pytorch_ssim
 import lib.fid.fid_score as fid
@@ -83,14 +84,37 @@ def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True,
 		if save:
 			plt.savefig(os.path.join(model_root,'evaluate/result_epoch{}.png'.format(e)),format='png',dpi=100)
 
-def calculate_metric(device,loader,net,fid_stats,mode,inception_model,is_flip_mask=False):
+def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,is_flip_mask=False):
   ### mode = train or test
-  recon_rmse_global = 0
+
+	### face segmentation metric
+  unique_labels = [0,1,2,3]
+  classes_metric = {}
+  for u in unique_labels:
+    classes_metric[u] = {
+        'precision': util.AverageMeter(),
+        'recall': util.AverageMeter(),
+        'iou': util.AverageMeter()
+    }
+  across_class_metric = {
+      'precision': util.AverageMeter(),
+      'recall': util.AverageMeter(),
+      'iou': util.AverageMeter()
+  }
+
+	### recon
   recon_l1_global = 0
+  recon_l1_local = 0
+	recon_rmse_global = 0
+  recon_rmse_local = 0
   
-	l1_criterion = nn.L1Loss()
-  rmse_criterion = loss.RMSELoss()
-  
+	### criterions
+	l1_global_criterion = nn.L1Loss()
+  rmse_global_criterion = loss.RMSELoss()
+
+	l1_local_criterion = loss.LocalLoss(nn.L1Loss)
+	rmse_local_criterion = loss.LocalLoss(loss.RMSELoss())
+	
   size = 0
   target_dir = f'tmp/{mode}_m'
   if not os.path.exists(target_dir):
@@ -110,23 +134,91 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,is_flip_ma
       masked = input * (1-m)
       out = net(masked)
       out = out * m + masked
-      
-      recon_rmse_global += rmse_criterion(input,out).item()
+
+			### recon
+      recon_rmse_global += rmse_global_criterion(input,out).item()
 			recon_l1_global +=  l1_criterion(input,out).item()
+
+			recon_rmse_local += rmse_local_criterion(input,out,m).item()
+			recon_l1_local +=  l1_local_criterion(input,out,m).item()
       size += out.shape[0]
+
+			### face parsing
+			class_m, across_class_m = calculate_segmentation_eval_metric(segment,segment_prediction,unique_labels)
+      for u in unique_labels:
+        for k, _ in classes_metric[u].items():
+          classes_metric[u][k].update(class_m[u][k],input.size(0))
+      
+      for k, _ in across_class_metric.items():
+        across_class_metric[k].update(across_class_m[k], input.size(0))
       
       for c,g in enumerate(out):
         im = (g[0].detach().cpu().numpy()*255).astype(np.uint8)
         im = grey2rgb(im)
         io.imsave(os.path.join(target_dir,f'batch_{index+1}_{c+1}.jpg'),im)
 
-  m2, s2 = fid._compute_statistics_of_path(target_dir,inception_model,50,2048,True)
-
-  fid_score = fid.calculate_frechet_distance(fid_stats[0], fid_stats[1], m2, s2)
+	fid_score = -1
+	if not(fid_stats[0] == -1 and fid_stats[1] == -1):
+		m2, s2 = fid._compute_statistics_of_path(target_dir,inception_model,50,2048,True)
+		fid_score = fid.calculate_frechet_distance(fid_stats[0], fid_stats[1], m2, s2)
 
   metric = {
     'recon_rmse_global': recon_rmse_global / (index+1),
     'recon_l1_global': recon_l1_global / (index+1),
-    'fid': fid_score
+    'recon_rmse_local': recon_rmse_local / (index+1),
+    'recon_l1_local': recon_l1_local / (index+1),
+		'face_parsing_metric': {
+      'indv_class': classes_metric,
+      'accross_class': across_class_metric
+    },
+    'fid': fid_score,
+		'epoch': epoch
   }
   return metric
+
+def calculate_segmentation_eval_metric(labels,outputs,unique_labels):
+
+  prediction = torch.argmax(outputs,1)
+
+  eps = 1e-32
+  batch = labels.shape[0]
+  metric = {}
+
+  across_class_metric = {
+      'precision': 0,
+      'recall': 0,
+      'iou': 0
+  }
+
+  for u in unique_labels:
+    g = labels.detach().clone().view(batch,-1)
+    p = prediction.detach().clone().view(batch,-1)
+
+    g[g == u] = -1
+    g[g != -1] = 0
+    g[g == -1] = 1
+
+    p[p == u] = -1
+    p[p != -1] = 0
+    p[p == -1] = 1
+
+    intersection = (p & g).sum(1).float()
+    union = (p | g).sum(1).float()
+    iou = intersection / (union + eps)
+
+    ### how many predicted pixels are true
+    precision = ((intersection) / (p.sum(1) + eps))
+
+    ### how many true pixels are returned
+    recall = ((intersection) / (g.sum(1) + eps))
+
+    metric[u] = {'precision': precision.mean(), 'recall': recall.mean(), 'iou': iou.mean()}
+    across_class_metric['precision'] += precision.mean()
+    across_class_metric['recall'] += recall.mean()
+    across_class_metric['iou'] += iou.mean()
+  
+  across_class_metric['precision'] = across_class_metric['precision'] / len(unique_labels)
+  across_class_metric['recall'] = across_class_metric['recall'] / len(unique_labels)
+  across_class_metric['iou'] = across_class_metric['iou'] / len(unique_labels)
+
+  return metric, across_class_metric
