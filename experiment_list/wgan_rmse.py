@@ -19,7 +19,7 @@ def begin(state, loaders):
     {
       'title': 'wgan_rmse'
     }
-  }
+  )
 
   train_loader, test_loader, extra_loader = loaders['train'], loaders['test'], loaders['extra']
 

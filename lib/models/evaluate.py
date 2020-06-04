@@ -88,7 +88,7 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,is_flip_ma
   recon_rmse_global = 0
   recon_l1_global = 0
   
-	l1_criterion - nn.L1Loss()
+	l1_criterion = nn.L1Loss()
   rmse_criterion = loss.RMSELoss()
   
   size = 0

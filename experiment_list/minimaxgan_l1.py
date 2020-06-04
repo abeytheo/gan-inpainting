@@ -17,9 +17,9 @@ def begin(state, loaders):
   state = state.copy()
   state.update(
     {
-      'title': 'minimaxgan_rmse'
+      'title': 'minimaxgan_l1'
     }
-  }
+  )
 
   train_loader, test_loader, extra_loader = loaders['train'], loaders['test'], loaders['extra']
 

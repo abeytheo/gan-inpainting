@@ -17,9 +17,9 @@ def begin(state, loaders):
   state = state.copy()
   state.update(
     {
-      'title': 'wgan_rmse'
+      'title': 'wgan_l1'
     }
-  }
+  )
 
   train_loader, test_loader, extra_loader = loaders['train'], loaders['test'], loaders['extra']
 
@@ -193,7 +193,7 @@ def begin(state, loaders):
         epoch_g_loss['update_count'] += 1
 
         for n, p in net_G.named_parameters():
-          if(p.requires_grad) and ("bias" not in n):
+          if("bias" not in n):
             gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
 
         logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
@@ -208,7 +208,7 @@ def begin(state, loaders):
       epoch_d_loss['update_count'] += 1
 
       for n, p in net_D_global.named_parameters():
-        if(p.requires_grad) and ("bias" not in n):
+        if("bias" not in n):
           gradient_hist['avg_d'][n] += p.grad.abs().mean().item()
     
     ### get gradient and epoch loss for generator
@@ -218,7 +218,7 @@ def begin(state, loaders):
       epoch_g_loss['adv'] = epoch_g_loss['adv'] / epoch_g_loss['update_count']
 
       for n, p in net_G.named_parameters():
-        if(p.requires_grad) and ("bias" not in n):
+        if("bias" not in n):
           gradient_hist['avg_g'][n] = gradient_hist['avg_g'][n] / epoch_g_loss['update_count']
 
     except:
@@ -229,7 +229,7 @@ def begin(state, loaders):
       epoch_g_loss['adv'] = -7777
 
       for n, p in net_G.named_parameters():
-        if(p.requires_grad) and ("bias" not in n):
+        if("bias" not in n):
           gradient_hist['avg_g'][n] = -7777
 
     
@@ -239,7 +239,7 @@ def begin(state, loaders):
     epoch_d_loss['adv_fake'] = epoch_d_loss['adv_fake'] / epoch_d_loss['update_count']
     
     for n, p in net_D_global.named_parameters():
-      if(p.requires_grad) and ("bias" not in n):
+      if("bias" not in n):
         gradient_hist['avg_d'][n] = gradient_hist['avg_d'][n] / epoch_d_loss['update_count']
     
     training_epoc_hist.append({
