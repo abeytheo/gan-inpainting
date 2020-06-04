@@ -180,7 +180,7 @@ state['inception_model'] = inception_model
 state['segmentation_model'] = segmentation_model
 
 print('Begin experiments')
-for module in exp_list:
+for module in args.experiments:
   print(module)
   exp = importlib.import_module('experiment_list.{}'.format(module))
   exp.begin(state, loaders)
