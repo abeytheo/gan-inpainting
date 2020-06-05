@@ -237,6 +237,8 @@ def begin(state, loaders):
       "gradients": gradient_hist
     })
 
+    is_alltime_low = False
+
     if epoch % evaluate_every == 0 and epoch > 0:
       train_metric = evaluate.calculate_metric(device,train_loader,net_G,state['train_fid'],mode='train',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
       test_metric = evaluate.calculate_metric(device,test_loader,net_G,state['test_fid'],mode='test',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
@@ -265,18 +267,20 @@ def begin(state, loaders):
       ### save evaluation history
       with open(os.path.join(experiment_dir,'eval_history.obj'),'wb') as handle:
         pickle.dump(eval_hist, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+      if test_metric['fid'] < lowest_fid['value']:
+        is_alltime_low = True
+        logger.info('All time low test FID: {alltime} < {prev_fid} at epoch {prev_ep}'.format(alltime=test_metric['fid'],prev_fid=lowest_fid['value'],prev_ep=lowest_fid['epoch']))
+        lowest_fid['value'] = test_metric['fid']
+        lowest_fid['epoch'] = epoch
   
-    if (epoch % save_every == 0 and epoch > 0) or (test_metric['fid'] < lowest_fid['value']):
+    if (epoch % save_every == 0 and epoch > 0) or (is_alltime_low):
       try:
         torch.save(net_G.state_dict(), os.path.join(experiment_dir, "epoch{}_G.pt".format(epoch)))
       except:
         logger.error(traceback.format_exc())
         pass
-
-    if test_metric['fid'] < lowest_fid['value']:
-      logger.info('All time low test FID: {alltime} < {prev_fid} at epoch {prev_ep}'.format(alltime=test_metric['fid'],prev_fid=lowest_fid['value'],prev_ep=lowest_fid['epoch']))
-      lowest_fid['value'] = test_metric['fid']
-      lowest_fid['epoch'] = epoch
+      
         
     elapsed = time.time() - start
     logger.info(f'epoch: {epoch}, time: {elapsed:.3f}s, D total: {epoch_d_loss["total"]:.10f}, D real: {epoch_d_loss["adv_real"]:.10f}, D fake: {epoch_d_loss["adv_fake"]:.10f}, G total: {epoch_g_loss["total"]:.3f}, G adv: {epoch_g_loss["adv"]:.10f}, G recon: {epoch_g_loss["recon"]:.3f}')
