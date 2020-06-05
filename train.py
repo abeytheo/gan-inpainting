@@ -6,6 +6,7 @@ import skimage
 import skimage.io as io
 from skimage.color import grey2rgb
 import functools
+from datetime import datetime
 
 import torch
 from torch import nn
@@ -34,6 +35,9 @@ parser.add_argument('--debug', nargs='?', type=str, default="false",help='Evalua
 
 args = parser.parse_args()
 state = vars(args)
+
+execution_date = datetime.strftime(datetime.now(),'%Y%m%d_%H%M%S')
+state['execution_date'] = execution_date
 
 ### Check experiment file
 exp_list = os.listdir('experiment_list')

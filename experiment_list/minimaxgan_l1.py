@@ -24,14 +24,16 @@ def begin(state, loaders):
   train_loader, test_loader, extra_loader = loaders['train'], loaders['test'], loaders['extra']
 
   ### Create save directory
-  experiment_dir = "/home/s2125048/thesis/model/{}/".format(state['title'])
+  experiment_dir = "/home/s2125048/thesis/model/{}/{}/".format(state['execution_date'],state['title'])
+  log_dir = os.path.join(experiment_dir,'log')
 
   if not os.path.exists(experiment_dir):
     os.makedirs(experiment_dir)
+    os.makedirs(log_dir)
 
   ### Setup logger
   logger = logging.getLogger(state['title'])
-  hdlr = logging.FileHandler('log/{}.log'.format(state['title']))
+  hdlr = logging.FileHandler('{}/{}.log'.format(log_dir,state['title']))s
   formatter = logging.Formatter('%(asctime)s %(message)s')
   hdlr.setFormatter(formatter)
   logger.addHandler(hdlr)
