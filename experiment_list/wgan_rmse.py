@@ -52,8 +52,6 @@ def begin(state, loaders):
   device = torch.device('cpu')
   if torch.cuda.is_available():
     device = torch.device("cuda:0")
-    
-  logger.info('using device',device)
 
   ### networks
   net_G = networks.get_network('generator',state['generator']).to(device)
