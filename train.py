@@ -171,8 +171,8 @@ inception_model = InceptionV3([block_idx])
 inception_model = inception_model.to(device)
 inception_model.eval()
 
-train_fid_stats = (-1,-1)
-test_fid_stats = (-1,-1)
+train_fid_stats = None
+test_fid_stats = None
 if not debug:
   train_fid_stats = fid._compute_statistics_of_path('tmp/train_groundtruths',inception_model,50,2048,True)
   test_fid_stats = fid._compute_statistics_of_path('tmp/test_groundtruths',inception_model,50,2048,True)

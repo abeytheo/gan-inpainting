@@ -5,6 +5,7 @@
 ### common partition: --partition=gpu_1080-ti
 
 #SBATCH --gres=gpu:1
+#SBATCH -c 8 --mem 16G
 #SBATCH -o slurm.out
 #SBATCH -N1
 

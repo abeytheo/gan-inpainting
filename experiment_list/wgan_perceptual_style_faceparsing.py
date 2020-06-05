@@ -222,9 +222,9 @@ def begin(state, loaders):
         g_perceptual_loss, g_style_loss = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.01)
       
         ### tv
-        g_tv_loss = tv_loss(inpainted,tv_weight=1)
+        g_tv_loss = loss.tv_loss(inpainted,tv_weight=1)
 
-        g_loss = g_adv_loss + recon_global_loss + g_perceptual_loss + g_style_loss + g_face_parsing_loss + g_tv_loss
+        g_loss = g_adv_loss + recon_global_loss + 0.1 * recon_local_loss + g_perceptual_loss + g_style_loss + g_face_parsing_loss + g_tv_loss
         g_loss.backward()
 
         D_G_z2 = d_pred_fake.mean().item()
