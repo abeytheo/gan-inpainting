@@ -2,6 +2,7 @@ from PIL import Image
 import pandas as pd
 import torch
 import os
+import numpy as np
 
 def pil_loader(path):
     # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
@@ -37,8 +38,13 @@ class InpaintingDataset(torch.utils.data.Dataset):
     rows = self.image_df.iloc[idx]
     groundtruth = pil_loader(os.path.join(self.root, rows['groundtruth_source']))
     mask = pil_loader(os.path.join(self.root, rows['mask_source']))
-    segment = np.load(os.path.join(self.root, rows['segment']))
-    segment = torch.from_numpy(segment)
+
+    try:
+      segment = np.load(os.path.join(self.root, rows['segment']))
+      segment = torch.from_numpy(segment)
+    except:
+      segment = torch.empty([1, 0])
+
     try:
       damage_type = rows['damage_type']
     except:
@@ -46,6 +52,5 @@ class InpaintingDataset(torch.utils.data.Dataset):
     if self.transform:
       groundtruth = self.transform(groundtruth)
       mask = self.transform(mask)
-      prefilled = self.transform(prefilled)
 
     return groundtruth,mask,segment

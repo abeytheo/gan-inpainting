@@ -79,6 +79,11 @@ def begin(state, loaders):
 
   G_iter_count = 0
   D_iter_count = 0
+  
+  lowest_fid = {
+      'value': 0,
+      'epoch': 0
+  }
 
   for epoch in range(num_epochs + 1):
     start = time.time()
@@ -249,15 +254,26 @@ def begin(state, loaders):
     })
 
     if epoch % evaluate_every == 0 and epoch > 0:
-      train_metric = evaluate.calculate_metric(device,train_loader,net_G,state['train_fid'],mode='train',inception_model=state['inception_model'])
-      test_metric = evaluate.calculate_metric(device,test_loader,net_G,state['test_fid'],mode='test',inception_model=state['inception_model'])
+      train_metric = evaluate.calculate_metric(device,train_loader,net_G,state['train_fid'],mode='train',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
+      test_metric = evaluate.calculate_metric(device,test_loader,net_G,state['test_fid'],mode='test',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
       eval_hist.append({
         'train': train_metric,
         'test': test_metric
       })
 
-      logger.info("VALIDATION: train - {}, test - {}".format(str(train_metric),str(test_metric)))
-
+      logger.info("----------")
+      logger.info("Validation")
+      logger.info("----------")
+      logger.info("Train recon global: {glo: .4f}, local: {loc: .4f}, FID: {fid: .4f}".format(glo=train_metric['recon_rmse_global'],loc=train_metric['recon_rmse_local'],fid=train_metric['fid']))
+      logger.info("Test recon global: {glo: .4f}, local: {loc: .4f}, FID: {fid: .4f}".format(glo=test_metric['recon_rmse_global'],loc=test_metric['recon_rmse_local'],fid=test_metric['fid']))
+      for u in unique_labels:
+        logger.info("Class {}: Precision {prec: .4f}, Recall {rec: .4f}, IoU {iou: .4f}".format(u,prec=test_metric['face_parsing_metric']['indv_class'][u]['precision'].avg,
+                                                                                        rec=test_metric['face_parsing_metric']['indv_class'][u]['recall'].avg,
+                                                                                        iou=test_metric['face_parsing_metric']['indv_class'][u]['iou'].avg))
+      logger.info("Across Classes: Precision {prec.avg: .4f}, Recall {rec.avg: .4f}, IoU {iou.avg: .4f}".format(prec=test_metric['face_parsing_metric']['accross_class']['precision'],
+                                                                    rec=test_metric['face_parsing_metric']['accross_class']['recall'],
+                                                                    iou=test_metric['face_parsing_metric']['accross_class']['iou']))
+    
       ### save training history
       with open(os.path.join(experiment_dir,'training_epoch_history.obj'),'wb') as handle:
         pickle.dump(training_epoc_hist, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -266,12 +282,17 @@ def begin(state, loaders):
       with open(os.path.join(experiment_dir,'eval_history.obj'),'wb') as handle:
         pickle.dump(eval_hist, handle, protocol=pickle.HIGHEST_PROTOCOL)
   
-    if epoch % save_every == 0 and epoch > 0:
+    if (epoch % save_every == 0 and epoch > 0) or (test_metric['fid'] < lowest_fid['value']):
       try:
         torch.save(net_G.state_dict(), os.path.join(experiment_dir, "epoch{}_G.pt".format(epoch)))
       except:
         logger.error(traceback.format_exc())
         pass
+
+    if test_metric['fid'] < lowest_fid['value']:
+      logger.info('All time low test FID: {alltime} < {prev_fid} at epoch {prev_ep}'.format(alltime=test_metric['fid'],prev_fid=lowest_fid['value'],prev_ep=lowest_fid['epoch']))
+      lowest_fid['value'] = test_metric['fid']
+      lowest_fid['epoch'] = epoch
         
     elapsed = time.time() - start
     logger.info(f'epoch: {epoch}, time: {elapsed:.3f}s, D total: {epoch_d_loss["total"]:.10f}, D real: {epoch_d_loss["adv_real"]:.10f}, D fake: {epoch_d_loss["adv_fake"]:.10f}, G total: {epoch_g_loss["total"]:.3f}, G adv: {epoch_g_loss["adv"]:.10f}, G recon: {epoch_g_loss["recon"]:.3f}')

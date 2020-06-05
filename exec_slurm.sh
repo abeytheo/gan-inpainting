@@ -9,4 +9,7 @@
 #SBATCH -N1
 
 source activate py3
-srun python -u train.py --experiments minimaxgan_rmse wgan_rmse -ep 400 -b 64 --saveevery 20 --evalevery 10
+srun python -u train.py --experiments minimaxgan_rmse wgan_rmse minimaxgan_l1 wgan_l1 wgan_perceptual_style_faceparsing -ep 200 -b 64 --saveevery 20 --evalevery 5
+
+### debug
+### srun python -u train.py --experiments minimaxgan_rmse wgan_rmse minimaxgan_l1 wgan_l1 wgan_perceptual_style_faceparsing -ep 1 -b 64 --saveevery 1 --evalevery 1 --debug true

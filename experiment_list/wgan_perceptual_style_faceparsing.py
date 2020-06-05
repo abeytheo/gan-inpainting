@@ -17,7 +17,7 @@ def begin(state, loaders):
   state = state.copy()
   state.update(
     {
-      'title': 'wgan_l1'
+      'title': 'wgan_perceptual_style_faceparsing'
     }
   )
 
@@ -50,8 +50,6 @@ def begin(state, loaders):
   device = torch.device('cpu')
   if torch.cuda.is_available():
     device = torch.device("cuda:0")
-    
-  logger.info('using device',device)
 
   ### networks
   net_G = networks.get_network('generator',state['generator']).to(device)
@@ -73,6 +71,7 @@ def begin(state, loaders):
 
   update_g_every = 5
 
+  unique_labels = [0,1,2,3]
   training_epoc_hist = []
   eval_hist = []
 
@@ -86,6 +85,11 @@ def begin(state, loaders):
 
   G_iter_count = 0
   D_iter_count = 0
+  
+  lowest_fid = {
+      'value': 0,
+      'epoch': 0
+  }
 
   for epoch in range(num_epochs + 1):
     start = time.time()
@@ -218,7 +222,7 @@ def begin(state, loaders):
         ### tv
         g_tv_loss = tv_loss(inpainted,tv_weight=1)
 
-        g_loss = g_adv_loss + recon_loss + g_perceptual_loss + g_style_loss + g_face_parsing_loss + g_tv_loss
+        g_loss = g_adv_loss + recon_global_loss + g_perceptual_loss + g_style_loss + g_face_parsing_loss + g_tv_loss
         g_loss.backward()
 
         D_G_z2 = d_pred_fake.mean().item()
@@ -297,8 +301,8 @@ def begin(state, loaders):
     })
 
     if epoch % evaluate_every == 0 and epoch > 0:
-      train_metric = evaluate.calculate_metric(device,train_loader,net_G,state['train_fid'],mode='train',inception_model=state['inception_model'])
-      test_metric = evaluate.calculate_metric(device,test_loader,net_G,state['test_fid'],mode='test',inception_model=state['inception_model'])
+      train_metric = evaluate.calculate_metric(device,train_loader,net_G,state['train_fid'],mode='train',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
+      test_metric = evaluate.calculate_metric(device,test_loader,net_G,state['test_fid'],mode='test',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
       eval_hist.append({
         'train': train_metric,
         'test': test_metric
@@ -307,7 +311,7 @@ def begin(state, loaders):
       logger.info("----------")
       logger.info("Validation")
       logger.info("----------")
-      logger.info("Train recon global: {glo: .4f}, local: {loc: .4f}, FID: {fid: .4f}".format(glo=train_metric['recon_global'],loc=train_metric['recon_local'],fid=train_metric['fid']))
+      logger.info("Train recon global: {glo: .4f}, local: {loc: .4f}, FID: {fid: .4f}".format(glo=train_metric['recon_rmse_global'],loc=train_metric['recon_rmse_local'],fid=train_metric['fid']))
       logger.info("Test recon global: {glo: .4f}, local: {loc: .4f}, FID: {fid: .4f}".format(glo=test_metric['recon_rmse_global'],loc=test_metric['recon_rmse_local'],fid=test_metric['fid']))
       for u in unique_labels:
         logger.info("Class {}: Precision {prec: .4f}, Recall {rec: .4f}, IoU {iou: .4f}".format(u,prec=test_metric['face_parsing_metric']['indv_class'][u]['precision'].avg,
@@ -325,12 +329,17 @@ def begin(state, loaders):
       with open(os.path.join(experiment_dir,'eval_history.obj'),'wb') as handle:
         pickle.dump(eval_hist, handle, protocol=pickle.HIGHEST_PROTOCOL)
   
-    if epoch % save_every == 0 and epoch > 0:
+    if (epoch % save_every == 0 and epoch > 0) or (test_metric['fid'] < lowest_fid['value']):
       try:
         torch.save(net_G.state_dict(), os.path.join(experiment_dir, "epoch{}_G.pt".format(epoch)))
       except:
         logger.error(traceback.format_exc())
         pass
+
+    if test_metric['fid'] < lowest_fid['value']:
+      logger.info('All time low test FID: {alltime} < {prev_fid} at epoch {prev_ep}'.format(alltime=test_metric['fid'],prev_fid=lowest_fid['value'],prev_ep=lowest_fid['epoch']))
+      lowest_fid['value'] = test_metric['fid']
+      lowest_fid['epoch'] = epoch
         
     elapsed = time.time() - start
     
@@ -339,7 +348,7 @@ def begin(state, loaders):
     logger.info('> Adversarial')
     logger.info(f'EM Distance: {epoch_d_loss["total"]:.10f}')
     logger.info('> Reconstruction')
-    logger.info(f'Generator recon global: {epoch_g_loss["recon_global"]:.3f}, local: {epoch_g_loss["recon_local"]:.3f}')
+    logger.info(f'Generator recon global: {epoch_g_loss["recon_global"]:.5f}, local: {epoch_g_loss["recon_local"]:.5f}')
     logger.info('> Face Parsing')
     for u in unique_labels:
       logger.info("Class {}: Precision {prec: .4f}, Recall {rec: .4f}, IoU {iou: .4f}".format(u,prec=classes_metric[u]['precision'].avg,

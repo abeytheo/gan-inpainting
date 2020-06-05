@@ -1,7 +1,12 @@
 import torch
 from torch import nn
+from lib.models import networks
 
-vgg = VGG19Wrapper().to(device)
+device = torch.device('cpu')
+if torch.cuda.is_available():
+  device = torch.device("cuda:0")
+  
+vgg = networks.VGG19Wrapper().to(device)
 vgg.eval()
 
 """
@@ -24,11 +29,10 @@ class RMSELoss(nn.Module):
 class LocalLoss(nn.Module):
     def __init__(self, baseloss, eps=1e-16):
         super().__init__()
-        
-        self.loss = baseloss(reduction='none')
-        
-        if isinstance(self.loss, RMSELoss):
+        if isinstance(baseloss, RMSELoss):
             self.loss = nn.MSELoss(reduction='none')
+        else:
+          self.loss = baseloss(reduction='none')       
             
         self.eps = eps
         

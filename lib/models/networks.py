@@ -362,8 +362,6 @@ class PatchGANDiscriminator(nn.Module):
         output = self.model(x)
         return output.view(-1, 1)
 
-
-
 class VGG19Wrapper(nn.Module):
     def __init__(self):
         super(VGG19Wrapper, self).__init__()

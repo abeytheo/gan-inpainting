@@ -65,6 +65,8 @@ dataset_path = "/home/s2125048/thesis/dataset/"
 
 ### construct training dataset
 train_df = pd.read_csv(os.path.join(dataset_path,'csv/train_all_masks.csv'))
+if debug:
+  train_df = train_df.head(100)
 
 train_dataset = dataset.InpaintingDataset(dataset_path,dataframe=train_df,
                                   transform=transforms.Compose([
@@ -80,6 +82,8 @@ train_loader = torch.utils.data.DataLoader(
 
 ### construct test dataset
 test_df = pd.read_csv(os.path.join(dataset_path,'csv/test_all_masks.csv'))
+if debug:
+  test_df = test_df.head(100)
 
 test_dataset = dataset.InpaintingDataset(dataset_path,dataframe=test_df,
                                   transform=transforms.Compose([
@@ -106,6 +110,10 @@ extra_loader = torch.utils.data.DataLoader(
 )
 
 sample_test_images = next(iter(extra_loader))
+
+### logdir
+if not os.path.exists('log'):
+  os.makedirs('log')
 
 ### populate ground truths
 print('Populating groundtruths')
@@ -159,8 +167,8 @@ inception_model = InceptionV3([block_idx])
 inception_model = inception_model.to(device)
 inception_model.eval()
 
-train_fid_stats = -1
-test_fid_stats = -1
+train_fid_stats = (-1,-1)
+test_fid_stats = (-1,-1)
 if not debug:
   train_fid_stats = fid._compute_statistics_of_path('tmp/train_groundtruths',inception_model,50,2048,True)
   test_fid_stats = fid._compute_statistics_of_path('tmp/test_groundtruths',inception_model,50,2048,True)
@@ -170,14 +178,14 @@ segment_model_state = torch.load(os.path.join('_states/face_segmentation/face_se
 n_classes = 4
 segment_model = networks.UnetGenerator(1, n_classes, 7, ngf=32, norm_layer=functools.partial(nn.BatchNorm2d, affine=True, track_running_stats=True), 
                                 use_dropout='False')
-segment_model.load_state_dict(state)
+segment_model.load_state_dict(segment_model_state)
 segment_model = segment_model.to(device)
 segment_model.eval()
 
 state['train_fid'] = train_fid_stats
 state['test_fid'] = test_fid_stats
 state['inception_model'] = inception_model
-state['segmentation_model'] = segmentation_model
+state['segmentation_model'] = segment_model
 
 print('Begin experiments')
 for module in args.experiments:

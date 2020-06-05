@@ -84,10 +84,10 @@ def from_saved_obj(test,network_architecture,model_root,epoch_list=[],save=True,
 		if save:
 			plt.savefig(os.path.join(model_root,'evaluate/result_epoch{}.png'.format(e)),format='png',dpi=100)
 
-def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,is_flip_mask=False):
+def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,segment_model,is_flip_mask=False):
   ### mode = train or test
 
-	### face segmentation metric
+  ### face segmentation metric
   unique_labels = [0,1,2,3]
   classes_metric = {}
   for u in unique_labels:
@@ -102,19 +102,19 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,is_f
       'iou': util.AverageMeter()
   }
 
-	### recon
+  ### recon
   recon_l1_global = 0
   recon_l1_local = 0
-	recon_rmse_global = 0
+  recon_rmse_global = 0
   recon_rmse_local = 0
-  
-	### criterions
-	l1_global_criterion = nn.L1Loss()
+
+  ### criterions
+  l1_global_criterion = nn.L1Loss()
   rmse_global_criterion = loss.RMSELoss()
 
-	l1_local_criterion = loss.LocalLoss(nn.L1Loss)
-	rmse_local_criterion = loss.LocalLoss(loss.RMSELoss())
-	
+  l1_local_criterion = loss.LocalLoss(nn.L1Loss)
+  rmse_local_criterion = loss.LocalLoss(loss.RMSELoss())
+
   size = 0
   target_dir = f'tmp/{mode}_m'
   if not os.path.exists(target_dir):
@@ -125,8 +125,9 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,is_f
         os.remove(f)
 
   with torch.no_grad():
-    for index,(input,mask,_) in enumerate(loader):
+    for index,(input,mask,segment) in enumerate(loader):
       mask = torch.ceil(mask.to(device))
+      segment = segment.to(device)
       input = input.to(device)
       m = mask
       if is_flip_mask:
@@ -135,16 +136,19 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,is_f
       out = net(masked)
       out = out * m + masked
 
-			### recon
-      recon_rmse_global += rmse_global_criterion(input,out).item()
-			recon_l1_global +=  l1_criterion(input,out).item()
+      ### segmentation
+      segment_prediction = segment_model(out)
 
-			recon_rmse_local += rmse_local_criterion(input,out,m).item()
-			recon_l1_local +=  l1_local_criterion(input,out,m).item()
+      ### recon
+      recon_rmse_global += rmse_global_criterion(input,out).item()
+      recon_l1_global +=  l1_global_criterion(input,out).item()
+      
+      recon_rmse_local += rmse_local_criterion(input,out,m).item()
+      recon_l1_local +=  l1_local_criterion(input,out,m).item()
       size += out.shape[0]
 
-			### face parsing
-			class_m, across_class_m = calculate_segmentation_eval_metric(segment,segment_prediction,unique_labels)
+      ### face parsing
+      class_m, across_class_m = calculate_segmentation_eval_metric(segment,segment_prediction,unique_labels)
       for u in unique_labels:
         for k, _ in classes_metric[u].items():
           classes_metric[u][k].update(class_m[u][k],input.size(0))
@@ -157,22 +161,22 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,is_f
         im = grey2rgb(im)
         io.imsave(os.path.join(target_dir,f'batch_{index+1}_{c+1}.jpg'),im)
 
-	fid_score = -1
-	if not(fid_stats[0] == -1 and fid_stats[1] == -1):
-		m2, s2 = fid._compute_statistics_of_path(target_dir,inception_model,50,2048,True)
-		fid_score = fid.calculate_frechet_distance(fid_stats[0], fid_stats[1], m2, s2)
+  fid_score = -1
+  if fid_stats:
+    m2, s2 = fid._compute_statistics_of_path(target_dir,inception_model,50,2048,True)
+    fid_score = fid.calculate_frechet_distance(fid_stats[0], fid_stats[1], m2, s2)
 
   metric = {
     'recon_rmse_global': recon_rmse_global / (index+1),
     'recon_l1_global': recon_l1_global / (index+1),
     'recon_rmse_local': recon_rmse_local / (index+1),
     'recon_l1_local': recon_l1_local / (index+1),
-		'face_parsing_metric': {
+    'face_parsing_metric': {
       'indv_class': classes_metric,
       'accross_class': across_class_metric
     },
     'fid': fid_score,
-		'epoch': epoch
+    'epoch': epoch
   }
   return metric
 
