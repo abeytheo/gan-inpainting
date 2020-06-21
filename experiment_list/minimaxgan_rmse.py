@@ -65,7 +65,8 @@ def begin(state, loaders):
   D_optimizer = optim.Adam(net_D_global.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
   update_g_every = 5
-
+  
+  unique_labels = [0,1,2,3]
   training_epoc_hist = []
   eval_hist = []
 
@@ -81,7 +82,7 @@ def begin(state, loaders):
   D_iter_count = 0
   
   lowest_fid = {
-      'value': 0,
+      'value': 1e9,
       'epoch': 0
   }
 
@@ -239,7 +240,7 @@ def begin(state, loaders):
 
     is_alltime_low = False
 
-    if epoch % evaluate_every == 0 and epoch > 0:
+    if epoch % evaluate_every == 0:
       train_metric = evaluate.calculate_metric(device,train_loader,net_G,state['train_fid'],mode='train',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
       test_metric = evaluate.calculate_metric(device,test_loader,net_G,state['test_fid'],mode='test',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
       eval_hist.append({

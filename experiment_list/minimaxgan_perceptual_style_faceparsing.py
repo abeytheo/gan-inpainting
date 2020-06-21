@@ -2,7 +2,7 @@ import torch
 import pandas as pd
 import time, math
 import pickle
-import itertools
+import itertools, functools
 from torchvision import datasets, transforms
 from torch import optim, nn
 import os, logging, argparse
@@ -17,7 +17,7 @@ def begin(state, loaders):
   state = state.copy()
   state.update(
     {
-      'title': 'wgan_rmse'
+      'title': 'minimaxgan_perceptual_style_faceparsing'
     }
   )
 
@@ -55,23 +55,30 @@ def begin(state, loaders):
 
   ### networks
   net_G = networks.get_network('generator',state['generator']).to(device)
-  net_D_global = networks.PatchGANDiscriminator(sigmoid=False).to(device)
+  net_D_global = networks.get_network('discriminator',state['discriminator']).to(device)
+  segment_model = state['segmentation_model']
 
-  rmse_criterion = loss.RMSELoss()
+  ### criterions
+  rmse_global_criterion = loss.RMSELoss()
+  rmse_local_criterion = loss.LocalLoss(loss.RMSELoss())
   bce_criterion = nn.BCELoss()
   l1_criterion = nn.L1Loss()
 
+  w = torch.tensor([0.1,1.2,0.7,0.7])
+  weight_ce_criterion = nn.CrossEntropyLoss(weight=w).to(device)
+
+  ### optimizer
   G_optimizer = optim.RMSprop(net_G.parameters(),lr=0.00005)
   D_optimizer = optim.RMSprop(net_D_global.parameters(),lr=0.00005)
 
   update_g_every = 5
-  
+
   unique_labels = [0,1,2,3]
   training_epoc_hist = []
   eval_hist = []
 
   ### Wassterstein Loss
-
+  
   one = torch.FloatTensor(1)
   mone = one * -1
 
@@ -91,7 +98,12 @@ def begin(state, loaders):
 
     epoch_g_loss = {
       'total': 0,
-      'recon': 0,
+      'recon_global': 0,
+      'recon_local': 0,
+      'face_parsing': 0,
+      'perceptual': 0,
+      'style': 0,
+      'tv': 0,
       'adv': 0,
       'update_count': 0
     }
@@ -106,6 +118,20 @@ def begin(state, loaders):
         'avg_d': {},
     }
 
+    ### face attr segmentation metric
+    classes_metric = {}
+    for u in unique_labels:
+      classes_metric[u] = {
+          'precision': util.AverageMeter(),
+          'recall': util.AverageMeter(),
+          'iou': util.AverageMeter()
+      }
+    across_class_metric = {
+        'precision': util.AverageMeter(),
+        'recall': util.AverageMeter(),
+        'iou': util.AverageMeter()
+    }
+
     for n, p in net_G.named_parameters():
       if("bias" not in n):
           gradient_hist['avg_g'][n] = 0
@@ -113,10 +139,15 @@ def begin(state, loaders):
       if("bias" not in n):
           gradient_hist['avg_d'][n] = 0
     
-    for current_batch_index,(ground,mask,_) in enumerate(train_loader):
+    for current_batch_index,(ground,mask,segment) in enumerate(train_loader):
+      
+      ## Freeze G while D is learning
+      util.set_requires_grad([net_D_global],True)
+      util.set_requires_grad([net_G],False)
 
       curr_batch_size = ground.shape[0]
       ground = ground.to(device)
+      segment = segment.to(device)
       mask = torch.ceil(mask.to(device))
 
       ## Inpaint masked images
@@ -131,25 +162,23 @@ def begin(state, loaders):
       # 1: Discriminator maximize [ log(D(x)) + log(1 - D(G(x))) ]
       ###
       # Update Discriminator networks.
-      util.set_requires_grad([net_D_global],True)
 
       D_optimizer.zero_grad()
 
-      ## We want the discriminator to be able to identify fake and real images+ add_label_noise(noise_std,curr_batch_size)
+      d_pred_real = net_D_global(ground).view(-1)
+      d_loss_real = bce_criterion(d_pred_real, torch.ones(len(d_pred_real)).to(device) )
+      d_loss_real.backward()
 
-      d_pred_real = net_D_global(ground)
-      d_pred_fake = net_D_global(inpainted.detach())
+      D_x = d_loss_real.mean().item()
 
-      d_loss_real = torch.mean(d_pred_real).view(1)
-      d_loss_real.backward(one)
-
-      d_loss_fake = torch.mean(d_pred_fake).view(1)
-      d_loss_fake.backward(mone)
-
-      d_loss =  d_loss_real - d_loss_fake
+      d_pred_fake = net_D_global(inpainted.detach()).view(-1)
+      d_loss_fake = bce_criterion(d_pred_fake, torch.zeros(len(d_pred_fake)).to(device) )    
+      d_loss_fake.backward()
 
       D_G_z1 = d_pred_fake.mean().item()
-      D_x = d_pred_real.mean().item()
+
+      d_loss = d_loss_real + d_loss_fake
+
       D_optimizer.step()
 
       D_iter_count +=1
@@ -157,87 +186,107 @@ def begin(state, loaders):
       # Clip weights of discriminator
       for p in net_D_global.parameters():
           p.data.clamp_(-0.01, 0.01)
+
+      ###s
+      # 2: Generator maximize [ log(D(G(x))) ]
+      ###
+
+      ## Freeze D while G is learning
+      util.set_requires_grad([net_D_global],False)
+      util.set_requires_grad([net_G],True)
       
-      ### On initial training epoch, we want D to converge as fast as possible before updating the generator
-      ### that's why, G is updated every 100 D iterations
-      if G_iter_count < 25 or G_iter_count % 500 == 0:
-        update_G_every_batch = 140
-      else:
-        update_G_every_batch = update_g_every
+      G_optimizer.zero_grad()
 
-      ### Update generator every `D_iter`
-      if current_batch_index % update_G_every_batch == 0 and current_batch_index > 0:
+      d_pred_fake = net_D_global(inpainted).view(-1)
 
-        ###
-        # 2: Generator maximize [ log(D(G(x))) ]
-        ###
+      ### we want the generator to be able to fool the discriminator, 
+      ### thus, the goal is to enable the discriminator to always predict the inpainted images as real
+      ### 1 = real, 0 = fake
+      g_adv_loss = bce_criterion(d_pred_fake, torch.ones(len(d_pred_fake)).to(device))
 
-        util.set_requires_grad([net_D_global],False)
-        G_optimizer.zero_grad()
+      ### the inpainted image should be close to ground truth
+      recon_global_loss = rmse_global_criterion(ground,out)
+      recon_local_loss = rmse_local_criterion(ground,out,mask)
 
-        d_pred_fake = net_D_global(inpainted).view(-1)
+      ### face parsing loss
+      inpainted_segment = segment_model(out)
+      g_face_parsing_loss = 0.1 * weight_ce_criterion(inpainted_segment,segment)
 
-        ### we want the generator to be able to fool the discriminator, 
-        ### thus, the goal is to enable the discriminator to always predict the inpainted images as real
-        ### 1 = real, 0 = fake
-        g_adv_loss = torch.mean(d_pred_fake).view(1)
+      ### perceptual and style
+      g_perceptual_loss_comp, g_style_loss_comp = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.1)
+      g_perceptual_loss_out, g_style_loss_out = loss.perceptual_and_style_loss(out,ground,weight_p=0.01,weight_s=0.1)
 
-        ### the inpainted image should be close to ground truth
-        recon_loss = rmse_criterion(ground,inpainted)
+      ### tv
+      g_tv_loss_comp = loss.tv_loss(inpainted,tv_weight=1)
+      g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
 
-        g_loss = g_adv_loss + recon_loss
-        g_loss.backward()
+      g_loss = g_adv_loss + recon_global_loss + 5 * recon_local_loss + \
+               g_perceptual_loss_out + g_perceptual_loss_comp + \
+               g_style_loss_out + g_style_loss_comp + \
+               g_tv_loss_out + g_tv_loss_comp + \
+               g_face_parsing_loss
 
-        D_G_z2 = d_pred_fake.mean().item()
-        G_optimizer.step()
+      g_loss.backward()
 
-        G_iter_count +=1 
+      D_G_z2 = d_pred_fake.mean().item()
+      G_optimizer.step()
 
-        epoch_g_loss['total'] += g_loss.item()
-        epoch_g_loss['recon'] += recon_loss.item()
-        epoch_g_loss['adv'] += g_adv_loss.item()
-        epoch_g_loss['update_count'] += 1
+      G_iter_count += 1
 
-        for n, p in net_G.named_parameters():
-          if("bias" not in n):
-            gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
+      ### update segmentation metric
+      class_m, across_class_m = evaluate.calculate_segmentation_eval_metric(segment,inpainted_segment,unique_labels)
+      for u in unique_labels:
+        for k, _ in classes_metric[u].items():
+          classes_metric[u][k].update(class_m[u][k],ground.size(0))
+      
+      for k, _ in across_class_metric.items():
+        across_class_metric[k].update(across_class_m[k], ground.size(0))
 
-        logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
-                % (epoch, num_epochs, current_batch_index, len(train_loader),
-                    d_loss.item(), g_adv_loss.item()))
-        
-      ### later will be divided by amount of training set
-      ### in a minibatch, number of output may differ
-      epoch_d_loss['total'] += d_loss.item()
-      epoch_d_loss['adv_real'] += d_loss_real.item()
-      epoch_d_loss['adv_fake'] += d_loss_fake.item()
-      epoch_d_loss['update_count'] += 1
+      epoch_g_loss['total'] += g_loss.item()
+      epoch_g_loss['recon_global'] += recon_global_loss.item()
+      epoch_g_loss['recon_local'] += recon_local_loss.item()
+      epoch_g_loss['adv'] += g_adv_loss.item()
+      epoch_g_loss['tv'] += g_tv_loss.item()
+      epoch_g_loss['perceptual'] += g_tv_loss.item()
+      epoch_g_loss['style'] += g_style_loss.item()
+      epoch_g_loss['face_parsing'] += g_face_parsing_loss.item()
+      epoch_g_loss['update_count'] += 1
 
-      for n, p in net_D_global.named_parameters():
+      for n, p in net_G.named_parameters():
         if("bias" not in n):
-          gradient_hist['avg_d'][n] += p.grad.abs().mean().item()
+          gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
+
+      logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
+              % (epoch, num_epochs, current_batch_index, len(train_loader),
+                  d_loss.item(), g_adv_loss.item()))
+      
+    ### later will be divided by amount of training set
+    ### in a minibatch, number of output may differ
+    epoch_d_loss['total'] += d_loss.item()
+    epoch_d_loss['adv_real'] += d_loss_real.item()
+    epoch_d_loss['adv_fake'] += d_loss_fake.item()
+    epoch_d_loss['update_count'] += 1
+
+    for n, p in net_D_global.named_parameters():
+      if("bias" not in n):
+        gradient_hist['avg_d'][n] += p.grad.abs().mean().item()
     
     ### get gradient and epoch loss for generator
     try:
       epoch_g_loss['total'] = epoch_g_loss['total'] / epoch_g_loss['update_count']
-      epoch_g_loss['recon'] = epoch_g_loss['recon'] / epoch_g_loss['update_count']
+      epoch_g_loss['recon_global'] = epoch_g_loss['recon_global'] / epoch_g_loss['update_count']
+      epoch_g_loss['recon_local'] = epoch_g_loss['recon_local'] / epoch_g_loss['update_count']
+      epoch_g_loss['tv'] = epoch_g_loss['tv'] / epoch_g_loss['update_count']
+      epoch_g_loss['perceptual'] = epoch_g_loss['perceptual'] / epoch_g_loss['update_count']
+      epoch_g_loss['style'] = epoch_g_loss['style'] / epoch_g_loss['update_count']
+      epoch_g_loss['face_parsing'] = epoch_g_loss['face_parsing'] / epoch_g_loss['update_count']
       epoch_g_loss['adv'] = epoch_g_loss['adv'] / epoch_g_loss['update_count']
 
       for n, p in net_G.named_parameters():
         if("bias" not in n):
           gradient_hist['avg_g'][n] = gradient_hist['avg_g'][n] / epoch_g_loss['update_count']
-
     except:
-
-      ### set invalid values when G is not updated
-      epoch_g_loss['total'] = -7777
-      epoch_g_loss['recon'] = -7777
-      epoch_g_loss['adv'] = -7777
-
-      for n, p in net_G.named_parameters():
-        if("bias" not in n):
-          gradient_hist['avg_g'][n] = -7777
-
+      pass
     
     ### get gradient and epoch loss for discriminator
     epoch_d_loss['total'] = epoch_d_loss['total'] / epoch_d_loss['update_count']
@@ -276,7 +325,7 @@ def begin(state, loaders):
       logger.info("Across Classes: Precision {prec.avg: .4f}, Recall {rec.avg: .4f}, IoU {iou.avg: .4f}".format(prec=test_metric['face_parsing_metric']['accross_class']['precision'],
                                                                     rec=test_metric['face_parsing_metric']['accross_class']['recall'],
                                                                     iou=test_metric['face_parsing_metric']['accross_class']['iou']))
-    
+                                                                    
       ### save training history
       with open(os.path.join(experiment_dir,'training_epoch_history.obj'),'wb') as handle:
         pickle.dump(training_epoc_hist, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -299,4 +348,18 @@ def begin(state, loaders):
         pass
         
     elapsed = time.time() - start
-    logger.info(f'epoch: {epoch}, time: {elapsed:.3f}s, D total: {epoch_d_loss["total"]:.10f}, D real: {epoch_d_loss["adv_real"]:.10f}, D fake: {epoch_d_loss["adv_fake"]:.10f}, G total: {epoch_g_loss["total"]:.3f}, G adv: {epoch_g_loss["adv"]:.10f}, G recon: {epoch_g_loss["recon"]:.3f}')
+    
+    logger.info(f'Epoch: {epoch}, time: {elapsed:.3f}s')
+    logger.info('')
+    logger.info('> Adversarial')
+    logger.info(f'EM Distance: {epoch_d_loss["total"]:.10f}')
+    logger.info('> Reconstruction')
+    logger.info(f'Generator recon global: {epoch_g_loss["recon_global"]:.5f}, local: {epoch_g_loss["recon_local"]:.5f}')
+    logger.info('> Face Parsing')
+    for u in unique_labels:
+      logger.info("Class {}: Precision {prec: .4f}, Recall {rec: .4f}, IoU {iou: .4f}".format(u,prec=classes_metric[u]['precision'].avg,
+                                                                                        rec=classes_metric[u]['recall'].avg,
+                                                                                        iou=classes_metric[u]['iou'].avg))
+    logger.info("Across Classes: Precision {prec.avg: .4f}, Recall {rec.avg: .4f}, IoU {iou.avg: .4f}".format(prec=across_class_metric['precision'],
+                                                                    rec=across_class_metric['recall'],
+                                                                    iou=across_class_metric['iou']))

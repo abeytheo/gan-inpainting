@@ -89,7 +89,7 @@ def begin(state, loaders):
   D_iter_count = 0
   
   lowest_fid = {
-      'value': 0,
+      'value': 1e9,
       'epoch': 0
   }
 
@@ -141,6 +141,10 @@ def begin(state, loaders):
     
     for current_batch_index,(ground,mask,segment) in enumerate(train_loader):
 
+      ## Freeze G while D is learning
+      util.set_requires_grad([net_D_global],True)
+      util.set_requires_grad([net_G],False)
+
       curr_batch_size = ground.shape[0]
       ground = ground.to(device)
       segment = segment.to(device)
@@ -158,7 +162,6 @@ def begin(state, loaders):
       # 1: Discriminator maximize [ log(D(x)) + log(1 - D(G(x))) ]
       ###
       # Update Discriminator networks.
-      util.set_requires_grad([net_D_global],True)
 
       D_optimizer.zero_grad()
 
@@ -200,7 +203,10 @@ def begin(state, loaders):
         # 2: Generator maximize [ log(D(G(x))) ]
         ###
 
+        ## Freeze D while G is learning
         util.set_requires_grad([net_D_global],False)
+        util.set_requires_grad([net_G],True)
+
         G_optimizer.zero_grad()
 
         d_pred_fake = net_D_global(inpainted).view(-1)
@@ -211,20 +217,27 @@ def begin(state, loaders):
         g_adv_loss = torch.mean(d_pred_fake).view(1)
 
         ### the inpainted image should be close to ground truth
-        recon_global_loss = rmse_global_criterion(ground,inpainted)
-        recon_local_loss = rmse_local_criterion(ground,inpainted,mask)
+        recon_global_loss = rmse_global_criterion(ground,out)
+        recon_local_loss = rmse_local_criterion(ground,out,mask)
 
         ### face parsing loss
-        inpainted_segment = segment_model(inpainted)
-        g_face_parsing_loss = 0.01 * weight_ce_criterion(inpainted_segment,segment)
+        inpainted_segment = segment_model(out)
+        g_face_parsing_loss = 0.1 * weight_ce_criterion(inpainted_segment,segment)
 
         ### perceptual and style
-        g_perceptual_loss, g_style_loss = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.01)
-      
-        ### tv
-        g_tv_loss = loss.tv_loss(inpainted,tv_weight=1)
+        g_perceptual_loss_comp, g_style_loss_comp = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.1)
+        g_perceptual_loss_out, g_style_loss_out = loss.perceptual_and_style_loss(out,ground,weight_p=0.01,weight_s=0.1)
 
-        g_loss = g_adv_loss + recon_global_loss + 0.1 * recon_local_loss + g_perceptual_loss + g_style_loss + g_face_parsing_loss + g_tv_loss
+        ### tv
+        g_tv_loss_comp = loss.tv_loss(inpainted,tv_weight=1)
+        g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
+
+        g_loss = g_adv_loss + recon_global_loss + 5*recon_local_loss + \
+                g_perceptual_loss_out + g_perceptual_loss_comp + \
+                g_style_loss_out + g_style_loss_comp + \
+                g_tv_loss_out + g_tv_loss_comp + \
+                g_face_parsing_loss
+
         g_loss.backward()
 
         D_G_z2 = d_pred_fake.mean().item()
@@ -304,7 +317,7 @@ def begin(state, loaders):
 
     is_alltime_low = False
 
-    if epoch % evaluate_every == 0 and epoch > 0:
+    if epoch % evaluate_every == 0:
       train_metric = evaluate.calculate_metric(device,train_loader,net_G,state['train_fid'],mode='train',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
       test_metric = evaluate.calculate_metric(device,test_loader,net_G,state['test_fid'],mode='test',inception_model=state['inception_model'],epoch=epoch,segment_model=state['segmentation_model'])
       eval_hist.append({
