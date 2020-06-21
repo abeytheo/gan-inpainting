@@ -134,7 +134,7 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,segm
         m = (1-mask)
       masked = input * (1-m)
       out = net(masked)
-      out = out * m + masked
+      inpainted = out * m + masked
 
       ### segmentation
       segment_prediction = segment_model(out)
