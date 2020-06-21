@@ -228,15 +228,19 @@ def begin(state, loaders):
         g_perceptual_loss_comp, g_style_loss_comp = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.1)
         g_perceptual_loss_out, g_style_loss_out = loss.perceptual_and_style_loss(out,ground,weight_p=0.01,weight_s=0.1)
 
+        g_perceptual = g_perceptual_loss_comp + g_perceptual_loss_out
+        g_style_loss = g_style_loss_comp + g_style_loss_out
+
         ### tv
         g_tv_loss_comp = loss.tv_loss(inpainted,tv_weight=1)
         g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
+        g_tv_loss = g_tv_loss_comp + g_tv_loss_out
 
-        g_loss = g_adv_loss + recon_global_loss + 5*recon_local_loss + \
-                g_perceptual_loss_out + g_perceptual_loss_comp + \
-                g_style_loss_out + g_style_loss_comp + \
-                g_tv_loss_out + g_tv_loss_comp + \
-                g_face_parsing_loss
+        g_loss = g_adv_loss + recon_global_loss + 5 * recon_local_loss + \
+                 g_perceptual_loss + \
+                 g_style_loss + \
+                 g_tv_loss + \
+                 g_face_parsing_loss
 
         g_loss.backward()
 
