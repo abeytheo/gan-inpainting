@@ -156,7 +156,7 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,segm
       for k, _ in across_class_metric.items():
         across_class_metric[k].update(across_class_m[k], input.size(0))
       
-      for c,g in enumerate(out):
+      for c,g in enumerate(inpainted):
         im = (g[0].detach().cpu().numpy()*255).astype(np.uint8)
         im = grey2rgb(im)
         io.imsave(os.path.join(target_dir,f'batch_{index+1}_{c+1}.jpg'),im)

@@ -143,7 +143,7 @@ def begin(state, loaders):
       
       ## Freeze G while D is learning
       util.set_requires_grad([net_D_global],True)
-      util.set_requires_grad([net_G],False)
+      net_G.eval()
 
       curr_batch_size = ground.shape[0]
       ground = ground.to(device)
@@ -153,10 +153,10 @@ def begin(state, loaders):
       ## Inpaint masked images
       masked = ground * (1-mask)
 
-      inpainted = net_G(masked)
+      out = net_G(masked)
 
       ### only replace the masked area
-      inpainted = masked + inpainted * mask
+      inpainted = masked + out * mask
 
       ###
       # 1: Discriminator maximize [ log(D(x)) + log(1 - D(G(x))) ]
@@ -193,7 +193,7 @@ def begin(state, loaders):
 
       ## Freeze D while G is learning
       util.set_requires_grad([net_D_global],False)
-      util.set_requires_grad([net_G],True)
+      net_G.train()
 
       G_optimizer.zero_grad()
 
@@ -216,7 +216,7 @@ def begin(state, loaders):
       g_perceptual_loss_comp, g_style_loss_comp = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.1)
       g_perceptual_loss_out, g_style_loss_out = loss.perceptual_and_style_loss(out,ground,weight_p=0.01,weight_s=0.1)
 
-      g_perceptual = g_perceptual_loss_comp + g_perceptual_loss_out
+      g_perceptual_loss = g_perceptual_loss_comp + g_perceptual_loss_out
       g_style_loss = g_style_loss_comp + g_style_loss_out
 
       ### tv
@@ -251,7 +251,7 @@ def begin(state, loaders):
       epoch_g_loss['recon_local'] += recon_local_loss.item()
       epoch_g_loss['adv'] += g_adv_loss.item()
       epoch_g_loss['tv'] += g_tv_loss.item()
-      epoch_g_loss['perceptual'] += g_tv_loss.item()
+      epoch_g_loss['perceptual'] += g_perceptual_loss.item()
       epoch_g_loss['style'] += g_style_loss.item()
       epoch_g_loss['face_parsing'] += g_face_parsing_loss.item()
       epoch_g_loss['update_count'] += 1
