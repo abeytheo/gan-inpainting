@@ -108,6 +108,10 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,segm
   recon_rmse_global = 0
   recon_rmse_local = 0
 
+  ### perceptual
+  perceptual_out = 0
+  perceptual_comp = 0
+
   ### criterions
   l1_global_criterion = nn.L1Loss()
   rmse_global_criterion = loss.RMSELoss()
@@ -147,6 +151,10 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,segm
       recon_l1_local +=  l1_local_criterion(input,out,m).item()
       size += out.shape[0]
 
+      ### content
+      perceptual_comp += loss.perceptual_loss(inpainted,input,weight=1).item()
+      perceptual_out += loss.perceptual_loss(out,input,weight=1).item()
+
       ### face parsing
       class_m, across_class_m = calculate_segmentation_eval_metric(segment,segment_prediction,unique_labels)
       for u in unique_labels:
@@ -171,6 +179,8 @@ def calculate_metric(device,loader,net,fid_stats,mode,inception_model,epoch,segm
     'recon_l1_global': recon_l1_global / (index+1),
     'recon_rmse_local': recon_rmse_local / (index+1),
     'recon_l1_local': recon_l1_local / (index+1),
+    'perceptual_comp': perceptual_comp / (index+1),
+    'perceptual_out': perceptual_out / (index+1),
     'face_parsing_metric': {
       'indv_class': classes_metric,
       'accross_class': across_class_metric

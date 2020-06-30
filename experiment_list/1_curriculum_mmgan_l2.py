@@ -17,7 +17,7 @@ def begin(state, loaders):
   state = state.copy()
   state.update(
     {
-      'title': 'minimaxgan_perceptual_style_faceparsing'
+      'title': '1_curriculum_mmgan_l2'
     }
   )
 
