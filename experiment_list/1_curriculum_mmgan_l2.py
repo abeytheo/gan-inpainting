@@ -348,6 +348,7 @@ def begin(state, loaders):
     if (epoch % save_every == 0 and epoch > 0) or (is_alltime_low):
       try:
         torch.save(net_G.state_dict(), os.path.join(experiment_dir, "epoch{}_G.pt".format(epoch)))
+        torch.save(net_D_global.state_dict(), os.path.join(experiment_dir, "epoch_D.pt"))
       except:
         logger.error(traceback.format_exc())
         pass
