@@ -58,10 +58,10 @@ def begin(state, loaders):
   net_D_global = networks.get_network('discriminator',state['discriminator']).to(device)
   segment_model = state['segmentation_model']
   
-  G_state = torch.load('/home/s2125048/thesis/model/20200626_093028/minimaxgan_perceptual_style_faceparsing/epoch290_G.pt',map_location='cuda:0' if torch.cuda.is_available() else 'cpu')
+  G_state = torch.load('/home/s2125048/thesis/model/20200630_181835/1_curriculum_mmgan_l2/epoch175_G.pt',map_location='cuda:0' if torch.cuda.is_available() else 'cpu')
   net_G.load_state_dict(G_state)
 
-  D_state = torch.load('',map_location='cuda:0' if torch.cuda.is_available() else 'cpu')
+  D_state = torch.load('/home/s2125048/thesis/model/20200630_181835/1_curriculum_mmgan_l2/epoch_D.pt',map_location='cuda:0' if torch.cuda.is_available() else 'cpu')
   net_D_global.load_state_dict(D_state)
 
   ### criterions
