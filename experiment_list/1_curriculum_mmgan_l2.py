@@ -224,7 +224,7 @@ def begin(state, loaders):
       # g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
       # g_tv_loss = g_tv_loss_comp + g_tv_loss_out
 
-      g_loss = g_adv_loss + recon_global_loss + 10 * recon_local_lossg
+      g_loss = g_adv_loss + recon_global_loss + 10 * recon_local_loss
       # g_loss = g_adv_loss + recon_global_loss + 5 * recon_local_loss + \
       #          g_perceptual_loss + \
       #          g_style_loss + \
