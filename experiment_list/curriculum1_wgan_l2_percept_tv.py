@@ -286,9 +286,9 @@ def begin(state, loaders):
           if("bias" not in n):
             gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
 
-        logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
-                % (epoch, num_epochs, current_batch_index, len(train_loader),
-                    d_loss.item(), g_adv_loss.item()))
+        # logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
+        #         % (epoch, num_epochs, current_batch_index, len(train_loader),
+        #             d_loss.item(), g_adv_loss.item()))
         
       ### later will be divided by amount of training set
       ### in a minibatch, number of output may differ
