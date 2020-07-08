@@ -133,3 +133,6 @@ dmypy.json
 *.csv
 notebook/
 _states/
+
+# Ignore log
+*.out

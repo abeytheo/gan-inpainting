@@ -191,10 +191,10 @@ def begin(state, loaders):
       
       ### On initial training epoch, we want D to converge as fast as possible before updating the generator
       ### that's why, G is updated every 100 D iterations
-      # if G_iter_count < 25 or G_iter_count % 500 == 0:
-      #   update_G_every_batch = 140
-      # else:
-      update_G_every_batch = update_g_every
+      if G_iter_count < 25 or G_iter_count % 500 == 0:
+        update_G_every_batch = 140
+      else:
+        update_G_every_batch = update_g_every
 
       ### Update generator every `D_iter`
       if current_batch_index % update_G_every_batch == 0 and current_batch_index > 0:
