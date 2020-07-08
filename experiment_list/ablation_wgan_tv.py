@@ -17,7 +17,7 @@ def begin(state, loaders):
   state = state.copy()
   state.update(
     {
-      'title': '1_curriculum_mmgan_l2'
+      'title': '5_curriculum_wgan_tv'
     }
   )
 
@@ -55,16 +55,16 @@ def begin(state, loaders):
 
   ### networks
   net_G = networks.get_network('generator',state['generator']).to(device)
-  net_D_global = networks.get_network('discriminator',state['discriminator']).to(device)
+  net_D_global = networks.PatchGANDiscriminator(sigmoid=False).to(device)
   segment_model = state['segmentation_model']
-
+  
   ### criterions
   rmse_global_criterion = loss.RMSELoss()
   rmse_local_criterion = loss.LocalLoss(loss.RMSELoss())
   bce_criterion = nn.BCELoss()
   l1_criterion = nn.L1Loss()
 
-  w = torch.tensor([0.1,1.2,0.7,0.7])
+  w = torch.tensor([0,1.2,0.7,0.7])
   weight_ce_criterion = nn.CrossEntropyLoss(weight=w).to(device)
 
   ### optimizer
@@ -140,7 +140,7 @@ def begin(state, loaders):
           gradient_hist['avg_d'][n] = 0
     
     for current_batch_index,(ground,mask,segment) in enumerate(train_loader):
-      
+
       ## Freeze G while D is learning
       util.set_requires_grad([net_D_global],True)
       net_G.eval()
@@ -165,20 +165,22 @@ def begin(state, loaders):
 
       D_optimizer.zero_grad()
 
-      d_pred_real = net_D_global(ground).view(-1)
-      d_loss_real = bce_criterion(d_pred_real, torch.ones(len(d_pred_real)).to(device) )
-      d_loss_real.backward()
+      ## We want the discriminator to be able to identify fake and real images+ add_label_noise(noise_std,curr_batch_size)
 
-      D_x = d_loss_real.mean().item()
+      d_pred_real = net_D_global(ground)
+      d_pred_fake = net_D_global(inpainted.detach())
 
-      d_pred_fake = net_D_global(inpainted.detach()).view(-1)
-      d_loss_fake = bce_criterion(d_pred_fake, torch.zeros(len(d_pred_fake)).to(device) )    
-      d_loss_fake.backward()
+      d_loss_real = torch.mean(d_pred_real).view(1)
+      d_loss_real.backward(one)
+
+      d_loss_fake = torch.mean(d_pred_fake).view(1)
+      d_loss_fake.backward(mone)
+
+      ### put absolute value for EM distance
+      d_loss =  torch.abs(d_loss_real - d_loss_fake)
 
       D_G_z1 = d_pred_fake.mean().item()
-
-      d_loss = d_loss_real + d_loss_fake
-
+      D_x = d_pred_real.mean().item()
       D_optimizer.step()
 
       D_iter_count +=1
@@ -186,103 +188,118 @@ def begin(state, loaders):
       # Clip weights of discriminator
       for p in net_D_global.parameters():
           p.data.clamp_(-0.01, 0.01)
-
-      ###s
-      # 2: Generator maximize [ log(D(G(x))) ]
-      ###
-
-      ## Freeze D while G is learning
-      util.set_requires_grad([net_D_global],False)
-      net_G.train()
-
-      G_optimizer.zero_grad()
-
-      d_pred_fake = net_D_global(inpainted).view(-1)
-
-      ### we want the generator to be able to fool the discriminator, 
-      ### thus, the goal is to enable the discriminator to always predict the inpainted images as real
-      ### 1 = real, 0 = fake
-      g_adv_loss = bce_criterion(d_pred_fake, torch.ones(len(d_pred_fake)).to(device))
-
-      ### the inpainted image should be close to ground truth
-      recon_global_loss = rmse_global_criterion(ground,out)
-      recon_local_loss = rmse_local_criterion(ground,out,mask)
-
-      ### face parsing loss
-      inpainted_segment = segment_model(out)
-      # g_face_parsing_loss = 0.1 * weight_ce_criterion(inpainted_segment,segment)
-
-      ### perceptual and style
-      # g_perceptual_loss_comp, g_style_loss_comp = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.1)
-      # g_perceptual_loss_out, g_style_loss_out = loss.perceptual_and_style_loss(out,ground,weight_p=0.01,weight_s=0.1)
-
-      # g_perceptual_loss = g_perceptual_loss_comp + g_perceptual_loss_out
-      # g_style_loss = g_style_loss_comp + g_style_loss_out
-
-      ### tv
-      # g_tv_loss_comp = loss.tv_loss(inpainted,tv_weight=1)
-      # g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
-      # g_tv_loss = g_tv_loss_comp + g_tv_loss_out
-
-      g_loss = g_adv_loss + recon_global_loss + 10 * recon_local_loss
-      # g_loss = g_adv_loss + recon_global_loss + 5 * recon_local_loss + \
-      #          g_perceptual_loss + \
-      #          g_style_loss + \
-      #          g_tv_loss + \
-      #          g_face_parsing_loss
-
-      g_loss.backward()
-
-      D_G_z2 = d_pred_fake.mean().item()
-      G_optimizer.step()
-
-      G_iter_count += 1
-
-      ### update segmentation metric
-      class_m, across_class_m = evaluate.calculate_segmentation_eval_metric(segment,inpainted_segment,unique_labels)
-      for u in unique_labels:
-        for k, _ in classes_metric[u].items():
-          classes_metric[u][k].update(class_m[u][k],ground.size(0))
       
-      for k, _ in across_class_metric.items():
-        across_class_metric[k].update(across_class_m[k], ground.size(0))
+      ### On initial training epoch, we want D to converge as fast as possible before updating the generator
+      ### that's why, G is updated every 100 D iterations
+      # if G_iter_count < 25 or G_iter_count % 500 == 0:
+      #   update_G_every_batch = 140
+      # else:
+      update_G_every_batch = update_g_every
 
-      epoch_g_loss['total'] += g_loss.item()
-      epoch_g_loss['recon_global'] += recon_global_loss.item()
-      epoch_g_loss['recon_local'] += recon_local_loss.item()
-      epoch_g_loss['adv'] += g_adv_loss.item()
-      # epoch_g_loss['tv'] += g_tv_loss.item()
-      # epoch_g_loss['perceptual'] += g_perceptual_loss.item()
-      # epoch_g_loss['style'] += g_style_loss.item()
-      # epoch_g_loss['face_parsing'] += g_face_parsing_loss.item()
-      epoch_g_loss['update_count'] += 1
+      ### Update generator every `D_iter`
+      if current_batch_index % update_G_every_batch == 0 and current_batch_index > 0:
 
-      for n, p in net_G.named_parameters():
+        ###
+        # 2: Generator maximize [ log(D(G(x))) ]
+        ###
+
+        ## Freeze D while G is learning
+        util.set_requires_grad([net_D_global],False)
+        net_G.train()
+
+        G_optimizer.zero_grad()
+
+        d_pred_fake = net_D_global(inpainted).view(-1)
+
+        ### we want the generator to be able to fool the discriminator, 
+        ### thus, the goal is to enable the discriminator to always predict the inpainted images as real
+        ### 1 = real, 0 = fake
+        g_adv_loss = torch.mean(d_pred_fake).view(1)
+
+        ### the inpainted image should be close to ground truth
+        # recon_global_loss = rmse_global_criterion(ground,out)
+        # recon_local_loss = rmse_local_criterion(ground,out,mask)
+
+        ### face parsing loss
+        inpainted_segment = segment_model(out)
+        # g_face_parsing_loss = weight_ce_criterion(inpainted_segment,segment)
+
+        ### perceptual and style
+        # g_perceptual_loss_comp = loss.perceptual_loss(inpainted,ground,weight=1)
+        # g_perceptual_loss_out = loss.perceptual_loss(out,ground,weight=1)
+        # g_style_loss_comp = loss.style_loss(inpainted,ground,weight=1)
+        # g_style_loss_out = loss.style_loss(out,ground,weight=1)
+
+        # g_perceptual_loss_comp, g_style_loss_comp = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.1)
+        # g_perceptual_loss_out, g_style_loss_out = loss.perceptual_and_style_loss(out,ground,weight_p=0.01,weight_s=0.1)
+
+        # g_perceptual_loss = g_perceptual_loss_comp + g_perceptual_loss_out
+        # g_style_loss = g_style_loss_comp + g_style_loss_out
+
+        ### tv
+        g_tv_loss_comp = loss.tv_loss(inpainted,tv_weight=1)
+        g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
+        g_tv_loss = g_tv_loss_comp + g_tv_loss_out
+
+        g_loss = g_adv_loss + g_tv_loss
+        # g_loss = g_adv_loss + recon_global_loss + 5 * recon_local_loss + \
+        #          g_perceptual_loss + \
+        #          g_style_loss + \
+        #          g_tv_loss + \
+        #          g_face_parsing_loss
+
+        g_loss.backward()
+
+        D_G_z2 = d_pred_fake.mean().item()
+        G_optimizer.step()
+
+        G_iter_count +=1
+
+        ### update segmentation metric
+        class_m, across_class_m = evaluate.calculate_segmentation_eval_metric(segment,inpainted_segment,unique_labels)
+        for u in unique_labels:
+          for k, _ in classes_metric[u].items():
+            classes_metric[u][k].update(class_m[u][k],ground.size(0))
+        
+        for k, _ in across_class_metric.items():
+          across_class_metric[k].update(across_class_m[k], ground.size(0))
+
+        epoch_g_loss['total'] += g_loss.item()
+        # epoch_g_loss['recon_global'] += recon_global_loss.item()
+        # epoch_g_loss['recon_local'] += recon_local_loss.item()
+        # epoch_g_loss['adv'] += g_adv_loss.item()
+        epoch_g_loss['tv'] += g_tv_loss.item()
+        # epoch_g_loss['perceptual'] += g_perceptual_loss.item()
+        # epoch_g_loss['style'] += g_style_loss.item()
+        # poch_g_loss['face_parsing'] += g_face_parsing_loss.item()
+        epoch_g_loss['update_count'] += 1
+
+        for n, p in net_G.named_parameters():
+          if("bias" not in n):
+            gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
+
+        # logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
+        #         % (epoch, num_epochs, current_batch_index, len(train_loader),
+        #             d_loss.item(), g_adv_loss.item()))
+        
+      ### later will be divided by amount of training set
+      ### in a minibatch, number of output may differ
+      epoch_d_loss['total'] += d_loss.item()
+      epoch_d_loss['adv_real'] += d_loss_real.item()
+      epoch_d_loss['adv_fake'] += d_loss_fake.item()
+      epoch_d_loss['update_count'] += 1
+
+      for n, p in net_D_global.named_parameters():
         if("bias" not in n):
-          gradient_hist['avg_g'][n] += p.grad.abs().mean().item()
-
-      logger.info('[epoch %d/%d][batch %d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
-              % (epoch, num_epochs, current_batch_index, len(train_loader),
-                  d_loss.item(), g_adv_loss.item()))
-      
-    ### later will be divided by amount of training set
-    ### in a minibatch, number of output may differ
-    epoch_d_loss['total'] += d_loss.item()
-    epoch_d_loss['adv_real'] += d_loss_real.item()
-    epoch_d_loss['adv_fake'] += d_loss_fake.item()
-    epoch_d_loss['update_count'] += 1
-
-    for n, p in net_D_global.named_parameters():
-      if("bias" not in n):
-        gradient_hist['avg_d'][n] += p.grad.abs().mean().item()
+          gradient_hist['avg_d'][n] += p.grad.abs().mean().item()
     
     ### get gradient and epoch loss for generator
     try:
       epoch_g_loss['total'] = epoch_g_loss['total'] / epoch_g_loss['update_count']
       epoch_g_loss['adv'] = epoch_g_loss['adv'] / epoch_g_loss['update_count']
-      epoch_g_loss['recon_global'] = epoch_g_loss['recon_global'] / epoch_g_loss['update_count']
-      epoch_g_loss['recon_local'] = epoch_g_loss['recon_local'] / epoch_g_loss['update_count']
-      # epoch_g_loss['tv'] = epoch_g_loss['tv'] / epoch_g_loss['update_count']
+      # epoch_g_loss['recon_global'] = epoch_g_loss['recon_global'] / epoch_g_loss['update_count']
+      # epoch_g_loss['recon_local'] = epoch_g_loss['recon_local'] / epoch_g_loss['update_count']
+      epoch_g_loss['tv'] = epoch_g_loss['tv'] / epoch_g_loss['update_count']
       # epoch_g_loss['perceptual'] = epoch_g_loss['perceptual'] / epoch_g_loss['update_count']
       # epoch_g_loss['style'] = epoch_g_loss['style'] / epoch_g_loss['update_count']
       # epoch_g_loss['face_parsing'] = epoch_g_loss['face_parsing'] / epoch_g_loss['update_count']

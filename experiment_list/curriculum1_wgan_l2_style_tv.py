@@ -17,7 +17,7 @@ def begin(state, loaders):
   state = state.copy()
   state.update(
     {
-      'title': '1_curriculum_wgan_l2'
+      'title': 'curriculum1_wgan_style_tv'
     }
   )
 
@@ -57,6 +57,14 @@ def begin(state, loaders):
   net_G = networks.get_network('generator',state['generator']).to(device)
   net_D_global = networks.PatchGANDiscriminator(sigmoid=False).to(device)
   segment_model = state['segmentation_model']
+
+  G_state = torch.load('/home/s2125048/thesis/model/20200707_220810/1_curriculum_wgan_l2/epoch80_G.pt',map_location='cuda:0' if torch.cuda.is_available() else 'cpu')
+  net_G.load_state_dict(G_state)
+  net_G.train()
+
+  D_state = torch.load('/home/s2125048/thesis/model/20200707_220810/1_curriculum_wgan_l2/epoch80_D.pt',map_location='cuda:0' if torch.cuda.is_available() else 'cpu')
+  net_D_global.load_state_dict(D_state)
+  net_D_global.train()
 
   ### criterions
   rmse_global_criterion = loss.RMSELoss()
@@ -224,19 +232,24 @@ def begin(state, loaders):
         inpainted_segment = segment_model(out)
         # g_face_parsing_loss = 0.1 * weight_ce_criterion(inpainted_segment,segment)
 
-        ### perceptual and style
+         ### perceptual and style
+        # g_perceptual_loss_comp = loss.perceptual_loss(inpainted,ground,weight=0.01)
+        # g_perceptual_loss_out = loss.perceptual_loss(out,ground,weight=0.011)
+        g_style_loss_comp = loss.style_loss(inpainted,ground,weight_s=0.1)
+        g_style_loss_out = loss.style_loss(out,ground,weight_s=0.1)
+
         # g_perceptual_loss_comp, g_style_loss_comp = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.1)
         # g_perceptual_loss_out, g_style_loss_out = loss.perceptual_and_style_loss(out,ground,weight_p=0.01,weight_s=0.1)
 
         # g_perceptual_loss = g_perceptual_loss_comp + g_perceptual_loss_out
-        # g_style_loss = g_style_loss_comp + g_style_loss_out
+        g_style_loss = g_style_loss_comp + g_style_loss_out
 
         ### tv
-        # g_tv_loss_comp = loss.tv_loss(inpainted,tv_weight=1)
-        # g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
-        # g_tv_loss = g_tv_loss_comp + g_tv_loss_out
+        g_tv_loss_comp = loss.tv_loss(inpainted,tv_weight=1)
+        g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
+        g_tv_loss = g_tv_loss_comp + g_tv_loss_out
 
-        g_loss = g_adv_loss + recon_global_loss + 10 * recon_local_loss
+        g_loss = g_adv_loss + recon_global_loss + 10 * recon_local_loss + g_style_loss + g_tv_loss
         # g_loss = g_adv_loss + recon_global_loss + 5 * recon_local_loss + \
         #          g_perceptual_loss + \
         #          g_style_loss + \
@@ -263,9 +276,9 @@ def begin(state, loaders):
         epoch_g_loss['recon_global'] += recon_global_loss.item()
         epoch_g_loss['recon_local'] += recon_local_loss.item()
         epoch_g_loss['adv'] += g_adv_loss.item()
-        # epoch_g_loss['tv'] += g_tv_loss.item()
+        epoch_g_loss['tv'] += g_tv_loss.item()
         # epoch_g_loss['perceptual'] += g_perceptual_loss.item()
-        # epoch_g_loss['style'] += g_style_loss.item()
+        epoch_g_loss['style'] += g_style_loss.item()
         # epoch_g_loss['face_parsing'] += g_face_parsing_loss.item()
         epoch_g_loss['update_count'] += 1
 
@@ -294,9 +307,9 @@ def begin(state, loaders):
       epoch_g_loss['adv'] = epoch_g_loss['adv'] / epoch_g_loss['update_count']
       epoch_g_loss['recon_global'] = epoch_g_loss['recon_global'] / epoch_g_loss['update_count']
       epoch_g_loss['recon_local'] = epoch_g_loss['recon_local'] / epoch_g_loss['update_count']
-      # epoch_g_loss['tv'] = epoch_g_loss['tv'] / epoch_g_loss['update_count']
+      epoch_g_loss['tv'] = epoch_g_loss['tv'] / epoch_g_loss['update_count']
       # epoch_g_loss['perceptual'] = epoch_g_loss['perceptual'] / epoch_g_loss['update_count']
-      # epoch_g_loss['style'] = epoch_g_loss['style'] / epoch_g_loss['update_count']
+      epoch_g_loss['style'] = epoch_g_loss['style'] / epoch_g_loss['update_count']
       # epoch_g_loss['face_parsing'] = epoch_g_loss['face_parsing'] / epoch_g_loss['update_count']
       
       for n, p in net_G.named_parameters():
@@ -360,7 +373,8 @@ def begin(state, loaders):
     if (epoch % save_every == 0 and epoch > 0) or (is_alltime_low):
       try:
         torch.save(net_G.state_dict(), os.path.join(experiment_dir, "epoch{}_G.pt".format(epoch)))
-        torch.save(net_D_global.state_dict(), os.path.join(experiment_dir, "epoch_D.pt"))
+        if is_alltime_low:
+          torch.save(net_D_global.state_dict(), os.path.join(experiment_dir, "epoch{}_D.pt".format(epoch)))
       except:
         logger.error(traceback.format_exc())
         pass
