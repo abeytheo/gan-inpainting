@@ -235,8 +235,8 @@ def begin(state, loaders):
          ### perceptual and style
         # g_perceptual_loss_comp = loss.perceptual_loss(inpainted,ground,weight=0.01)
         # g_perceptual_loss_out = loss.perceptual_loss(out,ground,weight=0.011)
-        g_style_loss_comp = loss.style_loss(inpainted,ground,weight_s=0.1)
-        g_style_loss_out = loss.style_loss(out,ground,weight_s=0.1)
+        g_style_loss_comp = loss.style_loss(inpainted,ground,weight=0.1)
+        g_style_loss_out = loss.style_loss(out,ground,weight=0.1)
 
         # g_perceptual_loss_comp, g_style_loss_comp = loss.perceptual_and_style_loss(inpainted,ground,weight_p=0.01,weight_s=0.1)
         # g_perceptual_loss_out, g_style_loss_out = loss.perceptual_and_style_loss(out,ground,weight_p=0.01,weight_s=0.1)
