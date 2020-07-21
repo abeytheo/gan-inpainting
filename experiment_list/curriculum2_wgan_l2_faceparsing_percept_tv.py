@@ -245,9 +245,9 @@ def begin(state, loaders):
         # g_style_loss = g_style_loss_comp + g_style_loss_out
 
         ### tv
-        # g_tv_loss_comp = loss.tv_loss(inpainted,tv_weight=1)
-        # g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
-        # g_tv_loss = g_tv_loss_comp + g_tv_loss_out
+        g_tv_loss_comp = loss.tv_loss(inpainted,tv_weight=1)
+        g_tv_loss_out = loss.tv_loss(out,tv_weight=1)
+        g_tv_loss = g_tv_loss_comp + g_tv_loss_out
 
         g_loss = g_adv_loss + recon_global_loss + 10 * recon_local_loss + \
                  0.1 * g_face_parsing_loss + g_perceptual_loss + g_tv_loss
